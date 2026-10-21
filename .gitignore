@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Xcode / Build
+build/
+DerivedData/
+*.app
+*.o
+*.swp
+*~
+.build/
+
+# Local scratches
+scratch/
+*.log

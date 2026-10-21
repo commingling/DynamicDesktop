@@ -9,6 +9,8 @@ Icon
 build/
 DerivedData/
 *.app
+*.zip
+*.dmg
 *.o
 *.swp
 *~

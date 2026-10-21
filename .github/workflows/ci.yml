@@ -1,0 +1,44 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Show Swift & Xcode Version
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Build DynamicDesktop App
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Verify App Bundle Structure
+        run: |
+          test -d "DynamicDesktop.app"
+          test -x "DynamicDesktop.app/Contents/MacOS/DynamicDesktop"
+          test -f "DynamicDesktop.app/Contents/Info.plist"
+          echo "App bundle verification passed!"
+
+      - name: Archive App Bundle
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent DynamicDesktop.app DynamicDesktop-macOS-arm64.zip
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynamicDesktop-macOS-arm64
+          path: DynamicDesktop-macOS-arm64.zip
+          retention-days: 14

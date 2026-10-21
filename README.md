@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/github/actions/workflow/status/commingling/DynamicDesktop/ci.yml?branch=main&style=flat-square&logo=github&label=CI%20Build" alt="Build Status">
+  <img src="https://img.shields.io/github/v/release/commingling/DynamicDesktop?style=flat-square&color=blue" alt="Latest Release">
   <img src="https://img.shields.io/badge/Platform-macOS%2014.0%2B-blue?style=flat-square&logo=apple" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Language-Swift%206-orange?style=flat-square&logo=swift" alt="Swift">
   <img src="https://img.shields.io/badge/Architecture-Apple%20Silicon-purple?style=flat-square" alt="Apple Silicon">
@@ -43,12 +45,12 @@
 
 ## 🛠️ 构建与安装 (Build & Install)
 
-### 依赖环境 (Prerequisites)
-* macOS 14.0 (Sonoma) 或更高版本
-* Xcode Command Line Tools (`xcode-select --install`)
-* Swift 5.9 / 6.0+
+### 方式一：直接下载使用 (Pre-built Release)
+1. 前往 [Releases 页面](https://github.com/commingling/DynamicDesktop/releases) 下载最新的 `DynamicDesktop-v1.0.0-arm64.zip`。
+2. 解压并将 `DynamicDesktop.app` 拖入 `/Applications/`（应用程序目录）。
+3. 首次启动如遇系统安全提示，前往「系统设置 ➔ 隐私与安全性」点击「仍要打开」即可。
 
-### 一键编译打包 (Build from Source)
+### 方式二：源码编译安装 (Build from Source)
 ```bash
 git clone https://github.com/commingling/DynamicDesktop.git
 cd DynamicDesktop

@@ -4,10 +4,9 @@ import ServiceManagement
 class StatusBarMenuController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var menu: NSMenu!
-    private var floatingPanel: FloatingButtonPanel
+    private var floatingPanel: FloatingButtonPanel?
     
-    init(floatingPanel: FloatingButtonPanel) {
-        self.floatingPanel = floatingPanel
+    override init() {
         super.init()
         
         setupStatusItem()
@@ -134,14 +133,15 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         launchItem.state = isLaunchAtLogin ? .on : .off
         menu.addItem(launchItem)
         
-        // Floating pill toggle (optional for users who want desktop button)
+        // Optional floating panel (disabled and hidden by default)
+        let isFloatingVisible = floatingPanel?.isVisible == true
         let floatingToggle = NSMenuItem(
-            title: "在桌面上显示悬浮控制按钮",
+            title: isFloatingVisible ? "隐藏桌面上显示的悬浮菜单" : "在桌面上显示悬浮控制菜单",
             action: #selector(toggleFloatingPanel),
             keyEquivalent: ""
         )
         floatingToggle.target = self
-        floatingToggle.state = floatingPanel.isVisible ? .on : .off
+        floatingToggle.state = isFloatingVisible ? .on : .off
         menu.addItem(floatingToggle)
         
         menu.addItem(NSMenuItem.separator())
@@ -198,15 +198,23 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     }
     
     @objc private func toggleFloatingPanel() {
-        if floatingPanel.isVisible {
-            floatingPanel.orderOut(nil)
+        if let panel = floatingPanel {
+            if panel.isVisible {
+                panel.orderOut(nil)
+            } else {
+                panel.makeKeyAndOrderFront(nil)
+            }
         } else {
-            floatingPanel.makeKeyAndOrderFront(nil)
+            let panel = FloatingButtonPanel()
+            panel.makeKeyAndOrderFront(nil)
+            self.floatingPanel = panel
         }
         rebuildMenu()
     }
     
     @objc private func quitApp() {
+        floatingPanel?.orderOut(nil)
+        floatingPanel = nil
         WallpaperEngine.shared.stopAll()
         NSApplication.shared.terminate(nil)
     }

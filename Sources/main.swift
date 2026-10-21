@@ -1,19 +1,12 @@
 import Cocoa
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var floatingPanel: FloatingButtonPanel?
     private var statusController: StatusBarMenuController?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Create the floating panel instance (kept hidden by default)
-        let panel = FloatingButtonPanel()
-        panel.orderOut(nil)
-        self.floatingPanel = panel
-        
-        // Initialize menu bar status controller (primary UI)
-        self.statusController = StatusBarMenuController(floatingPanel: panel)
-        
-        print("DynamicDesktop Menu Bar app started successfully.")
+        // Pure Menu Bar App: NO desktop windows or panels created on launch!
+        self.statusController = StatusBarMenuController()
+        print("DynamicDesktop started in pure Menu Bar mode.")
     }
     
     func applicationWillTerminate(_ notification: Notification) {

@@ -30,12 +30,15 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     private(set) var progress: Double = 0.0 // 0.0 to 1.0
     private(set) var isDownloading: Bool = false
     
+    private var lastReportedPercent: Int = -1
+    private var lastReportTime: Date = .distantPast
+    
     private var queue: [CatalogAsset] = []
     
     var isAutoDownloadEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: keyAutoDownload) == nil {
-                return true // Enabled by default as requested!
+                return true // Enabled by default as requested
             }
             return UserDefaults.standard.bool(forKey: keyAutoDownload)
         }
@@ -46,7 +49,7 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
             } else {
                 pauseDownload()
             }
-            notifyProgress()
+            notifyProgress(force: true)
         }
     }
     
@@ -57,10 +60,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         config.timeoutIntervalForResource = 1200
         self.session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         
-        // Ensure videos directory exists
         try? FileManager.default.createDirectory(at: videosDir, withIntermediateDirectories: true)
         
-        // Auto start background download if enabled
         if isAutoDownloadEnabled {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                 self?.checkAndStartNextDownload()
@@ -125,7 +126,6 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         }
         
         guard let asset = target else {
-            // All wallpapers downloaded!
             return
         }
         
@@ -156,23 +156,31 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         isDownloading = false
         progress = 0.0
         queue.removeAll()
-        notifyProgress()
+        notifyProgress(force: true)
     }
     
     private func startDownload(asset: CatalogAsset) {
         self.currentAsset = asset
         self.isDownloading = true
         self.progress = 0.0
+        self.lastReportedPercent = -1
         
         let task = session.downloadTask(with: asset.downloadURL)
         self.currentTask = task
         task.resume()
-        notifyProgress()
+        notifyProgress(force: true)
     }
     
-    private func notifyProgress() {
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .wallpaperDownloadProgress, object: nil)
+    private func notifyProgress(force: Bool = false) {
+        let currentPct = Int(progress * 100)
+        let now = Date()
+        
+        if force || (currentPct != lastReportedPercent && now.timeIntervalSince(lastReportTime) >= 1.5) {
+            lastReportedPercent = currentPct
+            lastReportTime = now
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .wallpaperDownloadProgress, object: nil)
+            }
         }
     }
     
@@ -181,7 +189,7 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         if totalBytesExpectedToWrite > 0 {
             self.progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-            notifyProgress()
+            notifyProgress(force: false)
         }
     }
     
@@ -190,7 +198,6 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         
         let dest = videosDir.appendingPathComponent("\(asset.id).mov")
         
-        // Remove if exists
         try? FileManager.default.removeItem(at: dest)
         
         do {
@@ -210,7 +217,7 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
             NotificationCenter.default.post(name: .wallpaperStateChanged, object: nil)
         }
         
-        // Continue downloading next wallpaper after a brief 3 second delay
+        // Delay 3 seconds before next download
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             self?.checkAndStartNextDownload()
         }
@@ -223,9 +230,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
             self.currentAsset = nil
             self.currentTask = nil
             self.progress = 0.0
-            notifyProgress()
+            notifyProgress(force: true)
             
-            // Retry next after 15 seconds if auto download is active
             if isAutoDownloadEnabled {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) { [weak self] in
                     self?.checkAndStartNextDownload()

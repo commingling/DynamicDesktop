@@ -5,6 +5,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var menu: NSMenu!
     private var floatingPanel: FloatingButtonPanel?
+    private var isMenuOpen: Bool = false
     
     override init() {
         super.init()
@@ -14,12 +15,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             self,
             selector: #selector(onWallpaperStateChanged),
             name: .wallpaperStateChanged,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(onDownloadProgressChanged),
-            name: .wallpaperDownloadProgress,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -295,8 +290,19 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         updateIcon()
     }
     
+    // MARK: - NSMenuDelegate
+    
     func menuWillOpen(_ menu: NSMenu) {
-        rebuildMenu()
+        if menu == self.menu {
+            isMenuOpen = true
+            rebuildMenu()
+        }
+    }
+    
+    func menuDidClose(_ menu: NSMenu) {
+        if menu == self.menu {
+            isMenuOpen = false
+        }
     }
     
     @objc private func toggleScreenItemClicked(_ sender: NSMenuItem) {
@@ -304,22 +310,18 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         guard sender.tag >= 0 && sender.tag < screens.count else { return }
         let screen = screens[sender.tag]
         WallpaperEngine.shared.toggleScreen(screen: screen)
-        rebuildMenu()
     }
     
     @objc private func startAllScreens() {
         WallpaperEngine.shared.startAll()
-        rebuildMenu()
     }
     
     @objc private func stopAllScreens() {
         WallpaperEngine.shared.stopAll()
-        rebuildMenu()
     }
     
     @objc private func nextWallpaperClicked() {
         WallpaperEngine.shared.switchToNextWallpaper()
-        rebuildMenu()
     }
     
     @objc private func autoSwitchIntervalClicked(_ sender: NSMenuItem) {
@@ -328,48 +330,39 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         if seconds > 0 && !WallpaperEngine.shared.isAnyScreenAnimating() {
             WallpaperEngine.shared.startAll()
         }
-        rebuildMenu()
     }
     
     @objc private func toggleShuffleClicked() {
         WallpaperEngine.shared.isShuffleEnabled.toggle()
-        rebuildMenu()
     }
     
     @objc private func toggleSyncAllScreensClicked() {
         WallpaperEngine.shared.syncAllScreensOnSwitch.toggle()
-        rebuildMenu()
     }
     
     @objc private func selectWallpaperItemClicked(_ sender: NSMenuItem) {
         guard let wp = sender.representedObject as? WallpaperAsset else { return }
         WallpaperEngine.shared.setWallpaper(wp)
-        rebuildMenu()
     }
     
     @objc private func toggleAutoDownloadClicked() {
         WallpaperDownloader.shared.isAutoDownloadEnabled.toggle()
-        rebuildMenu()
     }
     
     @objc private func downloadNextClicked() {
         WallpaperDownloader.shared.downloadBatch(count: 1)
-        rebuildMenu()
     }
     
     @objc private func downloadBatch5Clicked() {
         WallpaperDownloader.shared.downloadBatch(count: 5)
-        rebuildMenu()
     }
     
     @objc private func downloadAllClicked() {
         WallpaperDownloader.shared.downloadAll()
-        rebuildMenu()
     }
     
     @objc private func pauseDownloadClicked() {
         WallpaperDownloader.shared.pauseDownload()
-        rebuildMenu()
     }
     
     @objc private func openSystemWallpaperSettings() {
@@ -384,7 +377,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         } else {
             try? SMAppService.mainApp.register()
         }
-        rebuildMenu()
     }
     
     @objc private func toggleFloatingPanel() {
@@ -399,7 +391,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             panel.makeKeyAndOrderFront(nil)
             self.floatingPanel = panel
         }
-        rebuildMenu()
     }
     
     @objc private func quitApp() {
@@ -412,14 +403,12 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func onWallpaperStateChanged() {
         DispatchQueue.main.async { [weak self] in
-            self?.updateIcon()
-            self?.rebuildMenu()
-        }
-    }
-    
-    @objc private func onDownloadProgressChanged() {
-        DispatchQueue.main.async { [weak self] in
-            self?.rebuildMenu()
+            guard let self = self else { return }
+            self.updateIcon()
+            // CRUCIAL: Do NOT rebuild menu while user has it open!
+            if !self.isMenuOpen {
+                self.rebuildMenu()
+            }
         }
     }
 }

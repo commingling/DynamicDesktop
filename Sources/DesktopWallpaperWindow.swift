@@ -63,16 +63,25 @@ class DesktopWallpaperWindow: NSWindow {
     }
     
     func switchVideo(url: URL) {
-        queuePlayer?.pause()
-        playerLooper = nil
-        queuePlayer?.removeAllItems()
-        
         let playerItem = AVPlayerItem(url: url)
-        queuePlayer?.insert(playerItem, after: nil)
-        if let player = queuePlayer {
-            playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
-            player.play()
-        }
+        let newPlayer = AVQueuePlayer(playerItem: playerItem)
+        newPlayer.isMuted = true
+        newPlayer.automaticallyWaitsToMinimizeStalling = false
+        let newLooper = AVPlayerLooper(player: newPlayer, templateItem: playerItem)
+        
+        // Smooth cross-fade transition
+        CATransaction.begin()
+        let transition = CATransition()
+        transition.type = .fade
+        transition.duration = 0.5
+        contentView?.layer?.add(transition, forKey: "fadeTransition")
+        
+        queuePlayer?.pause()
+        self.playerLooper = newLooper
+        self.queuePlayer = newPlayer
+        self.playerLayer?.player = newPlayer
+        newPlayer.play()
+        CATransaction.commit()
     }
     
     func updateFrame(screen: NSScreen) {

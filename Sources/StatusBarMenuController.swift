@@ -56,7 +56,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         
         // Header
-        let headerItem = NSMenuItem(title: "🖥️ Mac 动态壁纸控制", action: nil, keyEquivalent: "")
+        let headerItem = NSMenuItem(title: "🖥️ Mac 动态壁纸控制台", action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
@@ -95,6 +95,79 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
+        // Quick Action: Next Wallpaper
+        let nextWpItem = NSMenuItem(
+            title: "⏭ 立即切换至下一张壁纸",
+            action: #selector(nextWallpaperClicked),
+            keyEquivalent: "n"
+        )
+        nextWpItem.target = self
+        menu.addItem(nextWpItem)
+        
+        // Auto-switch timer submenu
+        let autoSubmenu = NSMenu()
+        let currentInterval = WallpaperEngine.shared.autoSwitchInterval
+        
+        let intervals: [(title: String, seconds: Double)] = [
+            ("关闭", 0),
+            ("1 分钟 (快速体验)", 60),
+            ("3 分钟", 180),
+            ("5 分钟", 300),
+            ("10 分钟 (推荐)", 600),
+            ("15 分钟", 900),
+            ("30 分钟", 1800),
+            ("1 小时", 3600)
+        ]
+        
+        for option in intervals {
+            let item = NSMenuItem(title: option.title, action: #selector(autoSwitchIntervalClicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.seconds
+            if currentInterval == option.seconds {
+                item.state = .on
+            }
+            autoSubmenu.addItem(item)
+        }
+        
+        autoSubmenu.addItem(NSMenuItem.separator())
+        
+        // Shuffle toggle
+        let shuffleItem = NSMenuItem(
+            title: "🔀 随机切换壁纸 (Shuffle)",
+            action: #selector(toggleShuffleClicked),
+            keyEquivalent: ""
+        )
+        shuffleItem.target = self
+        shuffleItem.state = WallpaperEngine.shared.isShuffleEnabled ? .on : .off
+        autoSubmenu.addItem(shuffleItem)
+        
+        // Sync all screens toggle
+        let syncAllItem = NSMenuItem(
+            title: "🖥️ 切换壁纸时同步所有屏幕",
+            action: #selector(toggleSyncAllScreensClicked),
+            keyEquivalent: ""
+        )
+        syncAllItem.target = self
+        syncAllItem.state = WallpaperEngine.shared.syncAllScreensOnSwitch ? .on : .off
+        autoSubmenu.addItem(syncAllItem)
+        
+        let autoIntervalLabel: String
+        if currentInterval == 0 {
+            autoIntervalLabel = "关闭"
+        } else if currentInterval < 60 {
+            autoIntervalLabel = "\(Int(currentInterval))秒"
+        } else if currentInterval < 3600 {
+            autoIntervalLabel = "\(Int(currentInterval / 60))分钟"
+        } else {
+            autoIntervalLabel = "\(Int(currentInterval / 3600))小时"
+        }
+        
+        let timerMenuItem = NSMenuItem(title: "⏰ 自动定时切换壁纸 (当前: \(autoIntervalLabel))", action: nil, keyEquivalent: "")
+        timerMenuItem.submenu = autoSubmenu
+        menu.addItem(timerMenuItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // Wallpapers Submenu
         let currentWp = WallpaperEngine.shared.currentWallpaper
         let wpSubmenu = NSMenu()
@@ -111,7 +184,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         }
         
         let currentName = currentWp?.name ?? "默认壁纸"
-        let wpMenuItem = NSMenuItem(title: "🌄 切换原生壁纸 (\(currentName))", action: nil, keyEquivalent: "")
+        let wpMenuItem = NSMenuItem(title: "🌄 切换原生壁纸 (已下载 \(allWallpapers.count) 款) - \(currentName)", action: nil, keyEquivalent: "")
         wpMenuItem.submenu = wpSubmenu
         menu.addItem(wpMenuItem)
         
@@ -173,6 +246,31 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func stopAllScreens() {
         WallpaperEngine.shared.stopAll()
+        rebuildMenu()
+    }
+    
+    @objc private func nextWallpaperClicked() {
+        WallpaperEngine.shared.switchToNextWallpaper()
+        rebuildMenu()
+    }
+    
+    @objc private func autoSwitchIntervalClicked(_ sender: NSMenuItem) {
+        guard let seconds = sender.representedObject as? Double else { return }
+        WallpaperEngine.shared.autoSwitchInterval = seconds
+        // If user picked an interval and no screens are currently animating, start them so they enjoy it!
+        if seconds > 0 && !WallpaperEngine.shared.isAnyScreenAnimating() {
+            WallpaperEngine.shared.startAll()
+        }
+        rebuildMenu()
+    }
+    
+    @objc private func toggleShuffleClicked() {
+        WallpaperEngine.shared.isShuffleEnabled.toggle()
+        rebuildMenu()
+    }
+    
+    @objc private func toggleSyncAllScreensClicked() {
+        WallpaperEngine.shared.syncAllScreensOnSwitch.toggle()
         rebuildMenu()
     }
     

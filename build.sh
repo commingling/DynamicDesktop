@@ -18,6 +18,7 @@ mkdir -p "$RESOURCES"
 # Compile Swift sources
 swiftc -O \
   Sources/WallpaperDetector.swift \
+  Sources/WallpaperDownloader.swift \
   Sources/DesktopWallpaperWindow.swift \
   Sources/WallpaperEngine.swift \
   Sources/FloatingButtonPanel.swift \

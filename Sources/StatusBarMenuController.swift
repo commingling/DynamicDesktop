@@ -16,6 +16,18 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             name: .wallpaperStateChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onDownloadProgressChanged),
+            name: .wallpaperDownloadProgress,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onWallpaperStateChanged),
+            name: .wallpaperDownloadCompleted,
+            object: nil
+        )
     }
     
     private func setupStatusItem() {
@@ -188,8 +200,64 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         wpMenuItem.submenu = wpSubmenu
         menu.addItem(wpMenuItem)
         
+        // Auto Download Submenu
+        let dlSubmenu = NSMenu()
+        let downloader = WallpaperDownloader.shared
+        let downloadedCount = downloader.getDownloadedCount()
+        let totalCount = downloader.getTotalCount()
+        let undownloadedCount = max(0, totalCount - downloadedCount)
+        
+        // Auto download toggle
+        let autoDlItem = NSMenuItem(
+            title: "自动在后台下载官方壁纸 (无需手动下载)",
+            action: #selector(toggleAutoDownloadClicked),
+            keyEquivalent: ""
+        )
+        autoDlItem.target = self
+        autoDlItem.state = downloader.isAutoDownloadEnabled ? .on : .off
+        dlSubmenu.addItem(autoDlItem)
+        dlSubmenu.addItem(NSMenuItem.separator())
+        
+        if downloader.isDownloading, let asset = downloader.currentAsset {
+            let pct = Int(downloader.progress * 100)
+            let statusItem = NSMenuItem(title: "⏳ 正在下载: \(asset.name) (\(pct)%)", action: nil, keyEquivalent: "")
+            statusItem.isEnabled = false
+            dlSubmenu.addItem(statusItem)
+            
+            let pauseItem = NSMenuItem(title: "⏹ 暂停下载", action: #selector(pauseDownloadClicked), keyEquivalent: "")
+            pauseItem.target = self
+            dlSubmenu.addItem(pauseItem)
+        } else {
+            let nextDlItem = NSMenuItem(title: "⬇️ 立即下载下一款官方壁纸", action: #selector(downloadNextClicked), keyEquivalent: "")
+            nextDlItem.target = self
+            nextDlItem.isEnabled = undownloadedCount > 0
+            dlSubmenu.addItem(nextDlItem)
+            
+            let batch5Item = NSMenuItem(title: "⬇️ 批量下载 5 款壁纸", action: #selector(downloadBatch5Clicked), keyEquivalent: "")
+            batch5Item.target = self
+            batch5Item.isEnabled = undownloadedCount > 0
+            dlSubmenu.addItem(batch5Item)
+            
+            let allDlItem = NSMenuItem(title: "⬇️ 下载全部剩余官方壁纸 (\(undownloadedCount) 款)", action: #selector(downloadAllClicked), keyEquivalent: "")
+            allDlItem.target = self
+            allDlItem.isEnabled = undownloadedCount > 0
+            dlSubmenu.addItem(allDlItem)
+        }
+        
+        let dlHeaderTitle: String
+        if downloader.isDownloading, let asset = downloader.currentAsset {
+            let pct = Int(downloader.progress * 100)
+            dlHeaderTitle = "📥 官方壁纸自动下载 [正在下载 \(asset.name) \(pct)%]"
+        } else {
+            dlHeaderTitle = "📥 官方壁纸自动下载 (已就绪 \(downloadedCount)/\(totalCount) 款)"
+        }
+        
+        let dlMenuItem = NSMenuItem(title: dlHeaderTitle, action: nil, keyEquivalent: "")
+        dlMenuItem.submenu = dlSubmenu
+        menu.addItem(dlMenuItem)
+        
         // Open macOS Wallpaper Settings
-        let sysSettingsItem = NSMenuItem(title: "⚙️ 下载更多官方动态壁纸...", action: #selector(openSystemWallpaperSettings), keyEquivalent: "")
+        let sysSettingsItem = NSMenuItem(title: "⚙️ 打开 macOS 原生壁纸系统设置...", action: #selector(openSystemWallpaperSettings), keyEquivalent: "")
         sysSettingsItem.target = self
         menu.addItem(sysSettingsItem)
         
@@ -257,7 +325,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     @objc private func autoSwitchIntervalClicked(_ sender: NSMenuItem) {
         guard let seconds = sender.representedObject as? Double else { return }
         WallpaperEngine.shared.autoSwitchInterval = seconds
-        // If user picked an interval and no screens are currently animating, start them so they enjoy it!
         if seconds > 0 && !WallpaperEngine.shared.isAnyScreenAnimating() {
             WallpaperEngine.shared.startAll()
         }
@@ -277,6 +344,31 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     @objc private func selectWallpaperItemClicked(_ sender: NSMenuItem) {
         guard let wp = sender.representedObject as? WallpaperAsset else { return }
         WallpaperEngine.shared.setWallpaper(wp)
+        rebuildMenu()
+    }
+    
+    @objc private func toggleAutoDownloadClicked() {
+        WallpaperDownloader.shared.isAutoDownloadEnabled.toggle()
+        rebuildMenu()
+    }
+    
+    @objc private func downloadNextClicked() {
+        WallpaperDownloader.shared.downloadBatch(count: 1)
+        rebuildMenu()
+    }
+    
+    @objc private func downloadBatch5Clicked() {
+        WallpaperDownloader.shared.downloadBatch(count: 5)
+        rebuildMenu()
+    }
+    
+    @objc private func downloadAllClicked() {
+        WallpaperDownloader.shared.downloadAll()
+        rebuildMenu()
+    }
+    
+    @objc private func pauseDownloadClicked() {
+        WallpaperDownloader.shared.pauseDownload()
         rebuildMenu()
     }
     
@@ -313,6 +405,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     @objc private func quitApp() {
         floatingPanel?.orderOut(nil)
         floatingPanel = nil
+        WallpaperDownloader.shared.pauseDownload()
         WallpaperEngine.shared.stopAll()
         NSApplication.shared.terminate(nil)
     }
@@ -320,6 +413,12 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     @objc private func onWallpaperStateChanged() {
         DispatchQueue.main.async { [weak self] in
             self?.updateIcon()
+            self?.rebuildMenu()
+        }
+    }
+    
+    @objc private func onDownloadProgressChanged() {
+        DispatchQueue.main.async { [weak self] in
             self?.rebuildMenu()
         }
     }

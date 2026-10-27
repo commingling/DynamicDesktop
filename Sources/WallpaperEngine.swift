@@ -305,6 +305,39 @@ class WallpaperEngine {
         setWallpaper(nextWallpaper)
     }
     
+    /// Deletes a wallpaper asset by moving it to the system Trash.
+    /// If the asset is currently playing, switches to another wallpaper first.
+    func deleteWallpaper(_ asset: WallpaperAsset) -> Bool {
+        let all = WallpaperDetector.shared.getAllWallpapers()
+        guard all.count > 1 else {
+            print("Cannot delete the only available wallpaper.")
+            return false
+        }
+        
+        // 1. Mark as deleted in downloader so auto-download won't fetch it again
+        WallpaperDownloader.shared.markAsDeleted(assetID: asset.id)
+        
+        // 2. If deleting the current active wallpaper, switch to another wallpaper first
+        if currentWallpaper?.id == asset.id {
+            let candidates = all.filter { $0.id != asset.id }
+            if let next = candidates.first {
+                setWallpaper(next)
+            }
+        }
+        
+        // 3. Move the file to Trash (or remove)
+        let result = WallpaperDetector.shared.deleteWallpaperFile(asset)
+        switch result {
+        case .success:
+            print("Successfully moved wallpaper to Trash: \(asset.name)")
+            notifyChange()
+            return true
+        case .failure(let error):
+            print("Failed to delete wallpaper file: \(error)")
+            return false
+        }
+    }
+    
     private func startAutoSwitchTimer() {
         autoSwitchTimer?.invalidate()
         autoSwitchTimer = nil

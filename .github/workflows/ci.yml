@@ -28,6 +28,12 @@ jobs:
       - name: Test downloader
         run: python3 Tests/Downloader/run.py
 
+      - name: Test ambient audio
+        run: python3 Tests/AmbientAudio/run.py
+
+      - name: Test ambient matching
+        run: python3 Tests/AmbientMatch/run.py
+
       - name: Test wallpaper engine
         run: python3 Tests/WallpaperEngine/run.py
 

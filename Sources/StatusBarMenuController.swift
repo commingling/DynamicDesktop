@@ -128,6 +128,17 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         nextWpItem.target = self
         menu.addItem(nextWpItem)
         
+        if let currentWp = WallpaperEngine.shared.currentWallpaper {
+            let sizeLabel = currentWp.formattedFileSize.isEmpty ? "" : " (\(currentWp.formattedFileSize))"
+            let deleteCurrentItem = NSMenuItem(
+                title: "🗑️ 删除当前壁纸并换下一张\(sizeLabel)...",
+                action: #selector(deleteCurrentWallpaperClicked),
+                keyEquivalent: ""
+            )
+            deleteCurrentItem.target = self
+            menu.addItem(deleteCurrentItem)
+        }
+        
         // 4. Auto-switch timer submenu
         let autoSubmenu = NSMenu()
         let currentInterval = WallpaperEngine.shared.autoSwitchInterval
@@ -187,8 +198,33 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         let wpSubmenu = NSMenu()
         let allWallpapers = WallpaperDetector.shared.getAllWallpapers()
         
+        if let current = currentWp {
+            let delCurItem = NSMenuItem(
+                title: "🗑️ 删除当前壁纸「\(current.name)」(\(current.formattedFileSize))...",
+                action: #selector(deleteCurrentWallpaperClicked),
+                keyEquivalent: ""
+            )
+            delCurItem.target = self
+            wpSubmenu.addItem(delCurItem)
+            
+            let revealCurItem = NSMenuItem(
+                title: "📂 在访达 (Finder) 中定位当前壁纸文件...",
+                action: #selector(revealCurrentWallpaperInFinderClicked),
+                keyEquivalent: ""
+            )
+            revealCurItem.target = self
+            wpSubmenu.addItem(revealCurItem)
+            
+            wpSubmenu.addItem(NSMenuItem.separator())
+        }
+        
+        let chooseHeader = NSMenuItem(title: "点击选择壁纸：", action: nil, keyEquivalent: "")
+        chooseHeader.isEnabled = false
+        wpSubmenu.addItem(chooseHeader)
+        
         for wp in allWallpapers {
-            let item = NSMenuItem(title: wp.name, action: #selector(selectWallpaperItemClicked(_:)), keyEquivalent: "")
+            let title = wp.formattedFileSize.isEmpty ? wp.name : "\(wp.name) (\(wp.formattedFileSize))"
+            let item = NSMenuItem(title: title, action: #selector(selectWallpaperItemClicked(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = wp
             if currentWp?.id == wp.id {
@@ -221,7 +257,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         soundSubmenu.addItem(soundToggleItem)
 
         let warmFilterItem = NSMenuItem(
-            title: "🎧 耳机柔和降噪 / 暖音模式 (消除刺啦声与毛刺)",
+            title: "🎧 柔和模式（降低高频）",
             action: #selector(toggleWarmFilterClicked),
             keyEquivalent: ""
         )
@@ -333,6 +369,59 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         menu.addItem(dlMenuItem)
         downloadMenuItem = dlMenuItem
         updateVisibleDownloadProgress()
+        
+        // 7. Wallpaper Storage Management & Cleanup Submenu
+        let cleanSubmenu = NSMenu()
+        let totalSizeStr = WallpaperDetector.shared.getTotalWallpapersSize()
+        
+        let storageHeader = NSMenuItem(
+            title: "💾 共下载 \(allWallpapers.count) 款 4K 壁纸，占用空间 \(totalSizeStr)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        storageHeader.isEnabled = false
+        cleanSubmenu.addItem(storageHeader)
+        
+        let openFolderItem = NSMenuItem(
+            title: "📂 在访达中打开壁纸文件夹 (支持批量预览与删除)...",
+            action: #selector(openWallpapersFolderInFinderClicked),
+            keyEquivalent: ""
+        )
+        openFolderItem.target = self
+        cleanSubmenu.addItem(openFolderItem)
+        
+        cleanSubmenu.addItem(NSMenuItem.separator())
+        
+        if let current = currentWp {
+            let delCur = NSMenuItem(
+                title: "🗑️ 删除当前正在播放的壁纸「\(current.name)」(\(current.formattedFileSize))...",
+                action: #selector(deleteCurrentWallpaperClicked),
+                keyEquivalent: ""
+            )
+            delCur.target = self
+            cleanSubmenu.addItem(delCur)
+            cleanSubmenu.addItem(NSMenuItem.separator())
+        }
+        
+        let delListHeader = NSMenuItem(title: "点击将指定壁纸移入废纸篓（按大小降序）：", action: nil, keyEquivalent: "")
+        delListHeader.isEnabled = false
+        cleanSubmenu.addItem(delListHeader)
+        
+        let sortedBySize = allWallpapers.sorted { $0.fileSize > $1.fileSize }
+        for wp in sortedBySize {
+            let isCurrent = (wp.id == currentWp?.id)
+            let currentTag = isCurrent ? " [当前播放]" : ""
+            let sizeLabel = wp.formattedFileSize.isEmpty ? "" : " (\(wp.formattedFileSize))"
+            let title = "🗑️ \(wp.name)\(sizeLabel)\(currentTag)"
+            let item = NSMenuItem(title: title, action: #selector(deleteSpecificWallpaperClicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = wp
+            cleanSubmenu.addItem(item)
+        }
+        
+        let cleanMenuItem = NSMenuItem(title: "🗑️ 壁纸空间管理与删除 (已占用: \(totalSizeStr))", action: nil, keyEquivalent: "")
+        cleanMenuItem.submenu = cleanSubmenu
+        menu.addItem(cleanMenuItem)
         
         // Open macOS Wallpaper Settings
         let sysSettingsItem = NSMenuItem(title: "⚙️ 打开 macOS 原生壁纸系统设置...", action: #selector(openSystemWallpaperSettings), keyEquivalent: "")
@@ -454,6 +543,67 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func pauseDownloadClicked() {
         WallpaperDownloader.shared.pauseDownload()
+    }
+    
+    @objc private func deleteCurrentWallpaperClicked() {
+        guard let current = WallpaperEngine.shared.currentWallpaper else { return }
+        confirmAndDeleteWallpaper(current)
+    }
+    
+    @objc private func deleteSpecificWallpaperClicked(_ sender: NSMenuItem) {
+        guard let wp = sender.representedObject as? WallpaperAsset else { return }
+        confirmAndDeleteWallpaper(wp)
+    }
+    
+    @objc private func revealCurrentWallpaperInFinderClicked() {
+        guard let current = WallpaperEngine.shared.currentWallpaper else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([current.url])
+    }
+    
+    @objc private func openWallpapersFolderInFinderClicked() {
+        NSWorkspace.shared.open(WallpaperDetector.shared.videosDir)
+    }
+    
+    private func confirmAndDeleteWallpaper(_ wp: WallpaperAsset) {
+        let all = WallpaperDetector.shared.getAllWallpapers()
+        if all.count <= 1 {
+            let alert = NSAlert()
+            alert.messageText = "无法删除壁纸"
+            alert.informativeText = "「\(wp.name)」是当前仅有的一张壁纸。请至少保留一张壁纸，或下载其他壁纸后再删除。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "知道了")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        }
+        
+        let isCurrent = (WallpaperEngine.shared.currentWallpaper?.id == wp.id)
+        let alert = NSAlert()
+        alert.messageText = "确定将壁纸移入废纸篓吗？"
+        let switchNote = isCurrent ? "\n\n⚠️ 这是当前正在播放的壁纸，删除后将自动为您切换至下一张壁纸。" : ""
+        let sizeNote = wp.formattedFileSize.isEmpty ? "" : "\n文件大小：\(wp.formattedFileSize)"
+        alert.informativeText = "壁纸名称：\(wp.name)\(sizeNote)\(switchNote)"
+        alert.alertStyle = .critical
+        let deleteBtn = alert.addButton(withTitle: "移入废纸篓")
+        deleteBtn.hasDestructiveAction = true
+        alert.addButton(withTitle: "取消")
+        
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let success = WallpaperEngine.shared.deleteWallpaper(wp)
+            if success {
+                rebuildMenu()
+            } else {
+                let failAlert = NSAlert()
+                failAlert.messageText = "删除失败"
+                failAlert.informativeText = "无法将壁纸移入废纸篓，请检查文件权限或直接在访达中清理。"
+                failAlert.alertStyle = .warning
+                failAlert.addButton(withTitle: "确定")
+                NSApp.activate(ignoringOtherApps: true)
+                failAlert.runModal()
+            }
+        }
     }
     
     @objc private func openSystemWallpaperSettings() {

@@ -5,6 +5,20 @@ struct WallpaperAsset: Identifiable, Equatable {
     let name: String
     let url: URL
     
+    var fileSize: Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs?[.size] as? Int64) ?? 0
+    }
+    
+    var formattedFileSize: String {
+        let bytes = fileSize
+        guard bytes > 0 else { return "" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+    
     static func == (lhs: WallpaperAsset, rhs: WallpaperAsset) -> Bool {
         return lhs.id == rhs.id
     }
@@ -13,7 +27,7 @@ struct WallpaperAsset: Identifiable, Equatable {
 class WallpaperDetector {
     static let shared = WallpaperDetector()
     
-    private let videosDir = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/videos").expandingTildeInPath)
+    let videosDir = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/videos").expandingTildeInPath)
     private let manifestFile = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/manifest/entries.json").expandingTildeInPath)
     private let indexPlist = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/Store/Index.plist").expandingTildeInPath)
     
@@ -49,7 +63,7 @@ class WallpaperDetector {
     
     func getAllWallpapers() -> [WallpaperAsset] {
         let namesMap = getNamesMap()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: videosDir, includingPropertiesForKeys: nil) else {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: videosDir, includingPropertiesForKeys: [.fileSizeKey]) else {
             return []
         }
         
@@ -71,11 +85,36 @@ class WallpaperDetector {
         }
     }
     
+    func getTotalWallpapersSize() -> String {
+        let all = getAllWallpapers()
+        let totalBytes = all.reduce(Int64(0)) { $0 + $1.fileSize }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: totalBytes)
+    }
+    
     func getActiveWallpaper() -> WallpaperAsset? {
         let all = getAllWallpapers()
         if let activeID = getActiveAssetID(), let found = all.first(where: { $0.id == activeID }) {
             return found
         }
         return all.first
+    }
+    
+    /// Moves a wallpaper video file to the system Trash (or deletes it permanently if Trash is unavailable)
+    func deleteWallpaperFile(_ asset: WallpaperAsset) -> Result<Void, Error> {
+        do {
+            var trashURL: NSURL?
+            try FileManager.default.trashItem(at: asset.url, resultingItemURL: &trashURL)
+            return .success(())
+        } catch {
+            do {
+                try FileManager.default.removeItem(at: asset.url)
+                return .success(())
+            } catch let err {
+                return .failure(err)
+            }
+        }
     }
 }

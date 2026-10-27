@@ -27,6 +27,32 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     }
     
     private let keyAutoDownload = "AutoDownloadWallpapers"
+    private let keyDeletedAssetIDs = "DeletedWallpaperAssetIDs"
+    
+    var deletedAssetIDs: Set<String> {
+        get {
+            let list = defaults.stringArray(forKey: keyDeletedAssetIDs) ?? []
+            return Set(list)
+        }
+        set {
+            defaults.set(Array(newValue), forKey: keyDeletedAssetIDs)
+        }
+    }
+    
+    func markAsDeleted(assetID: String) {
+        var set = deletedAssetIDs
+        set.insert(assetID)
+        deletedAssetIDs = set
+        if currentAsset?.id == assetID {
+            pauseDownload()
+        }
+    }
+    
+    func unmarkDeleted(assetID: String) {
+        var set = deletedAssetIDs
+        set.remove(assetID)
+        deletedAssetIDs = set
+    }
     
     private var session: URLSession!
     private var currentTask: URLSessionDownloadTask?
@@ -116,7 +142,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         
         let downloadedIDs = Set(existingFiles.filter { $0.pathExtension.lowercased() == "mov" }
             .map { $0.deletingPathExtension().lastPathComponent })
-        return catalog.filter { !downloadedIDs.contains($0.id) }
+        let deleted = deletedAssetIDs
+        return catalog.filter { !downloadedIDs.contains($0.id) && !deleted.contains($0.id) }
     }
     
     func getDownloadedCount() -> Int {

@@ -9,27 +9,17 @@ class WallpaperEngine {
     static let shared = WallpaperEngine()
     
     private(set) var currentWallpaper: WallpaperAsset?
+    private var sharedPlayer: AVQueuePlayer?
+    private var sharedLooper: AVPlayerLooper?
+    
     private var windows: [CGDirectDisplayID: DesktopWallpaperWindow] = [:]
     private var autoSwitchTimer: Timer?
     
     // Settings Keys
-    private let keySyncAllScreens = "SyncAllScreensOnSwitch"
     private let keyAutoSwitchInterval = "AutoSwitchInterval"
     private let keyAutoSwitchShuffle = "AutoSwitchShuffle"
     private let keyLastWallpaperID = "LastSelectedWallpaperID"
-    
-    var syncAllScreensOnSwitch: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: keySyncAllScreens) == nil {
-                return true // Default: sync all screens on wallpaper change
-            }
-            return UserDefaults.standard.bool(forKey: keySyncAllScreens)
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: keySyncAllScreens)
-            notifyChange()
-        }
-    }
+    private let keyIsRunning = "IsDynamicDesktopRunning"
     
     var autoSwitchInterval: TimeInterval {
         get {
@@ -53,13 +43,13 @@ class WallpaperEngine {
     }
     
     init() {
-        // Load initial wallpaper (saved preference, active system wallpaper, or first available)
+        // Load initial wallpaper
         let all = WallpaperDetector.shared.getAllWallpapers()
         if let savedID = UserDefaults.standard.string(forKey: keyLastWallpaperID),
            let saved = all.first(where: { $0.id == savedID }) {
             self.currentWallpaper = saved
         } else {
-            self.currentWallpaper = WallpaperDetector.shared.getActiveWallpaper()
+            self.currentWallpaper = WallpaperDetector.shared.getActiveWallpaper() ?? all.first
         }
         
         NotificationCenter.default.addObserver(
@@ -69,8 +59,14 @@ class WallpaperEngine {
             object: nil
         )
         
-        // Start auto switch timer if previously configured
         startAutoSwitchTimer()
+        
+        // Auto-resume if it was running before
+        if UserDefaults.standard.bool(forKey: keyIsRunning) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.startAll()
+            }
+        }
     }
     
     private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
@@ -89,92 +85,101 @@ class WallpaperEngine {
         return !windows.isEmpty
     }
     
-    func startAnimating(screen: NSScreen) {
-        guard let did = displayID(for: screen) else { return }
-        if let existing = windows[did] {
-            existing.start()
-            notifyChange()
+    private func ensureSharedPlayer(for asset: WallpaperAsset) {
+        let playerItem = AVPlayerItem(url: asset.url)
+        let player = AVQueuePlayer(playerItem: playerItem)
+        player.isMuted = true
+        player.automaticallyWaitsToMinimizeStalling = false
+        self.sharedLooper = AVPlayerLooper(player: player, templateItem: playerItem)
+        self.sharedPlayer = player
+    }
+    
+    /// Starts dynamic wallpaper on ALL connected screens simultaneously with the exact same shared player
+    func startAll() {
+        guard let wallpaper = currentWallpaper ?? WallpaperDetector.shared.getActiveWallpaper() else {
+            print("No wallpaper found to animate!")
             return
         }
+        self.currentWallpaper = wallpaper
         
-        guard let wallpaper = currentWallpaper else {
-            if let refreshed = WallpaperDetector.shared.getActiveWallpaper() {
-                self.currentWallpaper = refreshed
+        if sharedPlayer == nil {
+            ensureSharedPlayer(for: wallpaper)
+        }
+        
+        // Attach all connected screens to the same shared player
+        for screen in NSScreen.screens {
+            guard let did = displayID(for: screen) else { continue }
+            if let existing = windows[did] {
+                existing.attachPlayer(sharedPlayer)
+                existing.start()
             } else {
-                print("No native wallpaper found to animate!")
-                return
+                let win = DesktopWallpaperWindow(screen: screen, player: sharedPlayer)
+                windows[did] = win
+                win.start()
             }
-            return
         }
         
-        let window = DesktopWallpaperWindow(screen: screen, videoURL: wallpaper.url)
-        windows[did] = window
-        window.start()
+        sharedPlayer?.play()
+        UserDefaults.standard.set(true, forKey: keyIsRunning)
         notifyChange()
     }
     
-    func stopAnimating(screen: NSScreen) {
-        guard let did = displayID(for: screen) else { return }
-        if let window = windows[did] {
-            window.stop()
-            windows.removeValue(forKey: did)
-            notifyChange()
-        }
-    }
-    
-    func toggleScreen(screen: NSScreen) {
-        if isScreenAnimating(screen) {
-            stopAnimating(screen: screen)
-        } else {
-            startAnimating(screen: screen)
-        }
-    }
-    
-    func startAll() {
-        for screen in NSScreen.screens {
-            startAnimating(screen: screen)
-        }
-    }
-    
+    /// Stops dynamic wallpaper on ALL screens
     func stopAll() {
+        sharedPlayer?.pause()
         for (_, win) in windows {
             win.stop()
         }
         windows.removeAll()
+        UserDefaults.standard.set(false, forKey: keyIsRunning)
         notifyChange()
     }
     
-    /// Switches wallpaper. When syncAllScreens is true, all connected screens will be updated/started together.
-    func setWallpaper(_ asset: WallpaperAsset, syncAllScreens: Bool? = nil) {
+    /// Toggles all screens on or off together
+    func toggleAll() {
+        if isAnyScreenAnimating() {
+            stopAll()
+        } else {
+            startAll()
+        }
+    }
+    
+    /// Backward-compatible alias for toggling screens
+    func toggleScreen(screen: NSScreen) {
+        toggleAll()
+    }
+    
+    /// Sets a new wallpaper and synchronizes it across ALL screens immediately
+    func setWallpaper(_ asset: WallpaperAsset) {
         self.currentWallpaper = asset
         UserDefaults.standard.set(asset.id, forKey: keyLastWallpaperID)
         
-        let shouldSync = syncAllScreens ?? self.syncAllScreensOnSwitch
+        let oldPlayer = sharedPlayer
+        oldPlayer?.pause()
         
-        if shouldSync {
-            // Apply to ALL connected displays
-            for screen in NSScreen.screens {
-                guard let did = displayID(for: screen) else { continue }
-                if let win = windows[did] {
-                    win.switchVideo(url: asset.url)
-                } else {
-                    // If not currently animating on this screen, create and start it
-                    let window = DesktopWallpaperWindow(screen: screen, videoURL: asset.url)
-                    windows[did] = window
-                    window.start()
-                }
-            }
-        } else {
-            // Only update displays that are currently animating
-            for (_, win) in windows {
-                win.switchVideo(url: asset.url)
+        // Create new synchronized player for this wallpaper
+        ensureSharedPlayer(for: asset)
+        
+        // Always apply to ALL screens
+        for screen in NSScreen.screens {
+            guard let did = displayID(for: screen) else { continue }
+            if let win = windows[did] {
+                win.attachPlayer(sharedPlayer)
+                win.start()
+            } else {
+                // If not yet running on this screen, create and start it
+                let win = DesktopWallpaperWindow(screen: screen, player: sharedPlayer)
+                windows[did] = win
+                win.start()
             }
         }
         
+        sharedPlayer?.play()
+        UserDefaults.standard.set(true, forKey: keyIsRunning)
         notifyChange()
     }
     
-    /// Switches to the next available wallpaper
+    /// Cycles to the next available wallpaper
     func switchToNextWallpaper() {
         let all = WallpaperDetector.shared.getAllWallpapers()
         guard !all.isEmpty else { return }
@@ -192,10 +197,9 @@ class WallpaperEngine {
             }
         }
         
-        setWallpaper(nextWallpaper, syncAllScreens: syncAllScreensOnSwitch)
+        setWallpaper(nextWallpaper)
     }
     
-    /// Starts or restarts the auto-switch timer based on autoSwitchInterval
     private func startAutoSwitchTimer() {
         autoSwitchTimer?.invalidate()
         autoSwitchTimer = nil
@@ -205,7 +209,7 @@ class WallpaperEngine {
         
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            // Only auto-switch if at least one screen is currently animating
+            // Only auto-switch if wallpaper is currently active
             if self.isAnyScreenAnimating() {
                 self.switchToNextWallpaper()
             }

@@ -3,11 +3,9 @@ import AVFoundation
 
 class DesktopWallpaperWindow: NSWindow {
     let screenTarget: NSScreen
-    private var queuePlayer: AVQueuePlayer?
-    private var playerLooper: AVPlayerLooper?
     private var playerLayer: AVPlayerLayer?
     
-    init(screen: NSScreen, videoURL: URL) {
+    init(screen: NSScreen, player: AVPlayer?) {
         self.screenTarget = screen
         
         super.init(
@@ -24,20 +22,13 @@ class DesktopWallpaperWindow: NSWindow {
         self.backgroundColor = .black
         self.hasShadow = false
         
-        setupPlayer(url: videoURL)
+        setupLayer(player: player)
     }
     
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     
-    private func setupPlayer(url: URL) {
-        let playerItem = AVPlayerItem(url: url)
-        let player = AVQueuePlayer(playerItem: playerItem)
-        player.isMuted = true
-        player.automaticallyWaitsToMinimizeStalling = false
-        self.playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
-        self.queuePlayer = player
-        
+    private func setupLayer(player: AVPlayer?) {
         let containerView = NSView(frame: NSRect(origin: .zero, size: screenTarget.frame.size))
         containerView.wantsLayer = true
         
@@ -52,36 +43,23 @@ class DesktopWallpaperWindow: NSWindow {
         self.setFrame(screenTarget.frame, display: true)
     }
     
-    func start() {
-        self.orderFrontRegardless()
-        queuePlayer?.play()
-    }
-    
-    func stop() {
-        queuePlayer?.pause()
-        self.orderOut(nil)
-    }
-    
-    func switchVideo(url: URL) {
-        let playerItem = AVPlayerItem(url: url)
-        let newPlayer = AVQueuePlayer(playerItem: playerItem)
-        newPlayer.isMuted = true
-        newPlayer.automaticallyWaitsToMinimizeStalling = false
-        let newLooper = AVPlayerLooper(player: newPlayer, templateItem: playerItem)
-        
-        // Smooth cross-fade transition
+    func attachPlayer(_ player: AVPlayer?) {
         CATransaction.begin()
         let transition = CATransition()
         transition.type = .fade
         transition.duration = 0.5
         contentView?.layer?.add(transition, forKey: "fadeTransition")
         
-        queuePlayer?.pause()
-        self.playerLooper = newLooper
-        self.queuePlayer = newPlayer
-        self.playerLayer?.player = newPlayer
-        newPlayer.play()
+        self.playerLayer?.player = player
         CATransaction.commit()
+    }
+    
+    func start() {
+        self.orderFrontRegardless()
+    }
+    
+    func stop() {
+        self.orderOut(nil)
     }
     
     func updateFrame(screen: NSScreen) {
@@ -90,8 +68,7 @@ class DesktopWallpaperWindow: NSWindow {
     }
     
     deinit {
-        queuePlayer?.pause()
-        queuePlayer = nil
-        playerLooper = nil
+        playerLayer?.player = nil
+        playerLayer = nil
     }
 }

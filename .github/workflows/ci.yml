@@ -23,13 +23,21 @@ jobs:
       - name: Build DynamicDesktop App
         run: |
           chmod +x build.sh
-          ./build.sh
+          BUILD_ARCH=arm64 ./build.sh
+
+      - name: Test downloader
+        run: python3 Tests/Downloader/run.py
+
+      - name: Test wallpaper engine
+        run: python3 Tests/WallpaperEngine/run.py
 
       - name: Verify App Bundle Structure
         run: |
           test -d "DynamicDesktop.app"
           test -x "DynamicDesktop.app/Contents/MacOS/DynamicDesktop"
           test -f "DynamicDesktop.app/Contents/Info.plist"
+          test "$(lipo -archs DynamicDesktop.app/Contents/MacOS/DynamicDesktop)" = "arm64"
+          vtool -show-build DynamicDesktop.app/Contents/MacOS/DynamicDesktop | grep -Eq 'minos[[:space:]]+14\.0(\.0)?([[:space:]]|$)'
           echo "App bundle verification passed!"
 
       - name: Archive App Bundle

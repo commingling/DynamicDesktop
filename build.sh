@@ -11,14 +11,21 @@ APP_BUNDLE="$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+BUILD_ARCH="${BUILD_ARCH:-$(uname -m)}"
+
+case "$BUILD_ARCH" in
+  arm64|x86_64) ;;
+  *) echo "Unsupported architecture: $BUILD_ARCH (expected arm64 or x86_64)" >&2; exit 1 ;;
+esac
 
 mkdir -p "$MACOS"
 mkdir -p "$RESOURCES"
 
 # Compile Swift sources
-swiftc -O \
+swiftc -O -target "$BUILD_ARCH-apple-macosx14.0" \
   Sources/WallpaperDetector.swift \
   Sources/WallpaperDownloader.swift \
+  Sources/AmbientSoundManager.swift \
   Sources/DesktopWallpaperWindow.swift \
   Sources/WallpaperEngine.swift \
   Sources/FloatingButtonPanel.swift \

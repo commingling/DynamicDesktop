@@ -19,8 +19,12 @@ struct CatalogAsset: Identifiable, Equatable {
 class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     static let shared = WallpaperDownloader()
     
-    private let manifestURL = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/manifest/entries.json").expandingTildeInPath)
-    private let videosDir = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/videos").expandingTildeInPath)
+    private let manifestURL: URL
+    private let videosDir: URL
+    private let defaultsSuiteName: String?
+    private var defaults: UserDefaults {
+        defaultsSuiteName.flatMap { UserDefaults(suiteName: $0) } ?? .standard
+    }
     
     private let keyAutoDownload = "AutoDownloadWallpapers"
     
@@ -34,16 +38,17 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     private var lastReportTime: Date = .distantPast
     
     private var queue: [CatalogAsset] = []
+    private var scheduleGeneration = 0
     
     var isAutoDownloadEnabled: Bool {
         get {
-            if UserDefaults.standard.object(forKey: keyAutoDownload) == nil {
+            if defaults.object(forKey: keyAutoDownload) == nil {
                 return true // Enabled by default as requested
             }
-            return UserDefaults.standard.bool(forKey: keyAutoDownload)
+            return defaults.bool(forKey: keyAutoDownload)
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: keyAutoDownload)
+            defaults.set(newValue, forKey: keyAutoDownload)
             if newValue {
                 checkAndStartNextDownload()
             } else {
@@ -53,18 +58,31 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         }
     }
     
-    override init() {
+    override convenience init() {
+        self.init(
+            manifestURL: URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/manifest/entries.json").expandingTildeInPath),
+            videosDir: URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/videos").expandingTildeInPath),
+            defaultsSuiteName: nil
+        )
+    }
+
+    init(manifestURL: URL, videosDir: URL, defaultsSuiteName: String?) {
+        self.manifestURL = manifestURL
+        self.videosDir = videosDir
+        self.defaultsSuiteName = defaultsSuiteName
         super.init()
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 1200
-        self.session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        self.session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
         
         try? FileManager.default.createDirectory(at: videosDir, withIntermediateDirectories: true)
         
         if isAutoDownloadEnabled {
+            let generation = scheduleGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                self?.checkAndStartNextDownload()
+                guard let self = self, self.scheduleGeneration == generation else { return }
+                self.checkAndStartNextDownload()
             }
         }
     }
@@ -96,7 +114,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
             return catalog
         }
         
-        let downloadedIDs = Set(existingFiles.map { $0.deletingPathExtension().lastPathComponent })
+        let downloadedIDs = Set(existingFiles.filter { $0.pathExtension.lowercased() == "mov" }
+            .map { $0.deletingPathExtension().lastPathComponent })
         return catalog.filter { !downloadedIDs.contains($0.id) }
     }
     
@@ -148,8 +167,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     
     func downloadBatch(count: Int) {
         let undownloaded = getUndownloadedAssets()
-        let toQueue = undownloaded.prefix(count)
-        for item in toQueue where !queue.contains(item) {
+        let toQueue = undownloaded.filter { $0.id != currentAsset?.id && !queue.contains($0) }.prefix(max(0, count))
+        for item in toQueue {
             queue.append(item)
         }
         checkAndStartNextDownload()
@@ -157,13 +176,14 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     
     func downloadAll() {
         let undownloaded = getUndownloadedAssets()
-        for item in undownloaded where !queue.contains(item) {
+        for item in undownloaded where item.id != currentAsset?.id && !queue.contains(item) {
             queue.append(item)
         }
         checkAndStartNextDownload()
     }
     
     func pauseDownload() {
+        scheduleGeneration += 1
         currentTask?.cancel()
         currentTask = nil
         currentAsset = nil
@@ -198,59 +218,66 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         }
     }
     
-    // MARK: - URLSessionDownloadDelegate
-    
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesExpectedToWrite > 0 {
-            self.progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-            notifyProgress(force: false)
+    // All download state and delegate callbacks are confined to the main queue.
+    // A cancelled task may still deliver callbacks after another task has started.
+    private func isCurrent(_ task: URLSessionTask) -> Bool {
+        return currentTask === task
+    }
+
+    private func finishCurrentDownload(success: Bool) {
+        currentAsset = nil
+        currentTask = nil
+        isDownloading = false
+        progress = 0.0
+        notifyProgress(force: true)
+
+        if success {
+            NotificationCenter.default.post(name: .wallpaperDownloadCompleted, object: nil)
+        }
+
+        let generation = scheduleGeneration
+        let delay = success ? 3.0 : 15.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, self.scheduleGeneration == generation else { return }
+            self.checkAndStartNextDownload()
         }
     }
-    
+
+    // MARK: - URLSessionDownloadDelegate
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard isCurrent(downloadTask), totalBytesExpectedToWrite > 0 else { return }
+        progress = min(1.0, max(0.0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+        notifyProgress()
+    }
+
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let asset = currentAsset else { return }
-        
+        guard isCurrent(downloadTask), let asset = currentAsset else { return }
+
+        guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+            print("Wallpaper download failed: unexpected HTTP response for \(asset.name)")
+            finishCurrentDownload(success: false)
+            return
+        }
+
         let dest = videosDir.appendingPathComponent("\(asset.id).mov")
-        
-        try? FileManager.default.removeItem(at: dest)
-        
         do {
-            try FileManager.default.moveItem(at: location, to: dest)
+            // Never delete an existing system wallpaper: another process may have
+            // downloaded it while this task was running.
+            if !FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.moveItem(at: location, to: dest)
+            }
             print("Successfully downloaded official wallpaper: \(asset.name) (\(asset.id))")
+            finishCurrentDownload(success: true)
         } catch {
             print("Failed to save wallpaper \(asset.name): \(error)")
-        }
-        
-        self.currentAsset = nil
-        self.currentTask = nil
-        self.isDownloading = false
-        self.progress = 0.0
-        
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .wallpaperDownloadCompleted, object: nil)
-            NotificationCenter.default.post(name: .wallpaperStateChanged, object: nil)
-        }
-        
-        // Delay 3 seconds before next download
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            self?.checkAndStartNextDownload()
+            finishCurrentDownload(success: false)
         }
     }
-    
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let err = error as NSError?, err.code != NSURLErrorCancelled {
-            print("Wallpaper download error: \(err.localizedDescription)")
-            self.isDownloading = false
-            self.currentAsset = nil
-            self.currentTask = nil
-            self.progress = 0.0
-            notifyProgress(force: true)
-            
-            if isAutoDownloadEnabled {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) { [weak self] in
-                    self?.checkAndStartNextDownload()
-                }
-            }
-        }
+        guard isCurrent(task), let error = error else { return }
+        print("Wallpaper download error: \(error.localizedDescription)")
+        finishCurrentDownload(success: false)
     }
 }

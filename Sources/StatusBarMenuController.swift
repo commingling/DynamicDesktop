@@ -6,6 +6,11 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     private var menu: NSMenu!
     private var floatingPanel: FloatingButtonPanel?
     private var isMenuOpen: Bool = false
+    private var downloadMenuItem: NSMenuItem?
+    private var downloadStatusItem: NSMenuItem?
+    private var pauseDownloadItem: NSMenuItem?
+    private var nextDownloadItem: NSMenuItem?
+    private var batchDownloadItem: NSMenuItem?
     
     override init() {
         super.init()
@@ -21,6 +26,12 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             self,
             selector: #selector(onWallpaperStateChanged),
             name: .wallpaperDownloadCompleted,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onDownloadProgress),
+            name: .wallpaperDownloadProgress,
             object: nil
         )
     }
@@ -61,6 +72,11 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     func rebuildMenu() {
         menu.removeAllItems()
+        downloadMenuItem = nil
+        downloadStatusItem = nil
+        pauseDownloadItem = nil
+        nextDownloadItem = nil
+        batchDownloadItem = nil
         
         // Header
         let headerItem = NSMenuItem(title: "🖥️ Mac 动态壁纸控制台", action: nil, keyEquivalent: "")
@@ -71,9 +87,9 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         // 1. Master Control (All screens together)
         let screens = NSScreen.screens
         let allAnimating = !screens.isEmpty && screens.allSatisfy { WallpaperEngine.shared.isScreenAnimating($0) }
-        let batchTitle = allAnimating 
-            ? "⏸ 所有屏幕全部恢复静止" 
-            : "▶ 让所有屏幕全部动起来 (双屏同步)"
+        let batchTitle = allAnimating
+            ? "⏸ 所有屏幕显示静态壁纸"
+            : "▶ 所有屏幕播放动态壁纸"
         let batchItem = NSMenuItem(title: batchTitle, action: #selector(toggleAllScreensClicked), keyEquivalent: "a")
         batchItem.target = self
         menu.addItem(batchItem)
@@ -81,7 +97,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // 2. Individual Screen Controls (单独开启/停止某个屏幕)
-        let sectionHeader = NSMenuItem(title: "💻 独立屏幕开关：", action: nil, keyEquivalent: "")
+        let sectionHeader = NSMenuItem(title: "💻 各屏幕动静设置（壁纸相同）：", action: nil, keyEquivalent: "")
         sectionHeader.isEnabled = false
         menu.addItem(sectionHeader)
         
@@ -89,7 +105,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             let isAnim = WallpaperEngine.shared.isScreenAnimating(screen)
             let rawName = screen.localizedName
             let screenLabel = rawName.contains("Built-in") || rawName.contains("Color LCD") ? "💻 内建屏幕" : "🖥️ \(rawName)"
-            let statusText = isAnim ? "🟢 正在运动 (点击停止 ⏸)" : "⚪️ 点击让它单独动起来 ▶"
+            let statusText = isAnim ? "🟢 动态播放（点击设为静态）" : "⚪️ 静态／未启用（点击播放）"
             
             let item = NSMenuItem(
                 title: "  \(screenLabel)：\(statusText)",
@@ -97,7 +113,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
                 keyEquivalent: "\(i + 1)"
             )
             item.target = self
-            item.tag = i
+            item.representedObject = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
             menu.addItem(item)
         }
         
@@ -185,9 +201,72 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         let wpMenuItem = NSMenuItem(title: "🌄 切换原生壁纸 (已就绪 \(allWallpapers.count) 款) - 当前: \(currentName)", action: nil, keyEquivalent: "")
         wpMenuItem.submenu = wpSubmenu
         menu.addItem(wpMenuItem)
+        if WallpaperEngine.shared.stillFrameError != nil {
+            let warning = NSMenuItem(title: "⚠️ 静态画面加载失败，请重新选择壁纸重试", action: nil, keyEquivalent: "")
+            warning.isEnabled = false
+            menu.addItem(warning)
+        }
+
+        // Ambient Sound Submenu
+        let soundMgr = AmbientSoundManager.shared
+        let soundSubmenu = NSMenu()
+        
+        let soundToggleItem = NSMenuItem(
+            title: "开启自然环境氛围音",
+            action: #selector(toggleAmbientSoundClicked),
+            keyEquivalent: ""
+        )
+        soundToggleItem.target = self
+        soundToggleItem.state = soundMgr.isEnabled ? .on : .off
+        soundSubmenu.addItem(soundToggleItem)
+        soundSubmenu.addItem(NSMenuItem.separator())
+        
+        let soundSection = NSMenuItem(title: "声音选择：", action: nil, keyEquivalent: "")
+        soundSection.isEnabled = false
+        soundSubmenu.addItem(soundSection)
+        
+        for soundType in AmbientSoundType.allCases {
+            let item = NSMenuItem(title: soundType.displayName, action: #selector(selectSoundTypeClicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = soundType
+            if soundMgr.selectedType == soundType {
+                item.state = .on
+            }
+            soundSubmenu.addItem(item)
+        }
+        
+        soundSubmenu.addItem(NSMenuItem.separator())
+        
+        let volSection = NSMenuItem(title: "音量大小：", action: nil, keyEquivalent: "")
+        volSection.isEnabled = false
+        soundSubmenu.addItem(volSection)
+        
+        let volumes: [(title: String, val: Float)] = [
+            ("🔈 10% (轻柔微声)", 0.10),
+            ("🔉 25% (舒适伴奏 - 推荐)", 0.25),
+            ("🔊 50% (沉浸自然)", 0.50),
+            ("🔊 75%", 0.75),
+            ("🔊 100%", 1.00)
+        ]
+        
+        for vol in volumes {
+            let item = NSMenuItem(title: vol.title, action: #selector(selectVolumeClicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = vol.val
+            if abs(soundMgr.volume - vol.val) < 0.05 {
+                item.state = .on
+            }
+            soundSubmenu.addItem(item)
+        }
+        
+        let currentSoundLabel = soundMgr.isEnabled ? soundMgr.getCurrentSoundName() : "已关闭"
+        let soundMenuItem = NSMenuItem(title: "🎵 官方自然环境音 (当前: \(currentSoundLabel))", action: nil, keyEquivalent: "")
+        soundMenuItem.submenu = soundSubmenu
+        menu.addItem(soundMenuItem)
         
         // 6. Auto Download Submenu
         let dlSubmenu = NSMenu()
+        dlSubmenu.autoenablesItems = false
         let downloader = WallpaperDownloader.shared
         let downloadedCount = downloader.getDownloadedCount()
         let totalCount = downloader.getTotalCount()
@@ -203,26 +282,31 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         dlSubmenu.addItem(autoDlItem)
         dlSubmenu.addItem(NSMenuItem.separator())
         
-        if downloader.isDownloading, let asset = downloader.currentAsset {
-            let pct = Int(downloader.progress * 100)
-            let statusItem = NSMenuItem(title: "⏳ 正在下载: \(asset.name) (\(pct)%)", action: nil, keyEquivalent: "")
-            statusItem.isEnabled = false
-            dlSubmenu.addItem(statusItem)
-            
-            let pauseItem = NSMenuItem(title: "⏹ 暂停下载", action: #selector(pauseDownloadClicked), keyEquivalent: "")
-            pauseItem.target = self
-            dlSubmenu.addItem(pauseItem)
-        } else {
-            let nextDlItem = NSMenuItem(title: "⬇️ 立即下载下一款官方壁纸", action: #selector(downloadNextClicked), keyEquivalent: "")
-            nextDlItem.target = self
-            nextDlItem.isEnabled = undownloadedCount > 0
-            dlSubmenu.addItem(nextDlItem)
-            
-            let batch5Item = NSMenuItem(title: "⬇️ 批量下载 5 款壁纸", action: #selector(downloadBatch5Clicked), keyEquivalent: "")
-            batch5Item.target = self
-            batch5Item.isEnabled = undownloadedCount > 0
-            dlSubmenu.addItem(batch5Item)
-        }
+        let statusItem = NSMenuItem(title: "当前没有正在进行的下载", action: nil, keyEquivalent: "")
+        statusItem.isEnabled = false
+        statusItem.isHidden = !downloader.isDownloading
+        dlSubmenu.addItem(statusItem)
+        downloadStatusItem = statusItem
+
+        let pauseItem = NSMenuItem(title: "⏹ 暂停下载", action: #selector(pauseDownloadClicked), keyEquivalent: "")
+        pauseItem.target = self
+        pauseItem.isHidden = !downloader.isDownloading
+        dlSubmenu.addItem(pauseItem)
+        pauseDownloadItem = pauseItem
+
+        let nextDlItem = NSMenuItem(title: "⬇️ 立即下载下一款官方壁纸", action: #selector(downloadNextClicked), keyEquivalent: "")
+        nextDlItem.target = self
+        nextDlItem.isEnabled = undownloadedCount > 0
+        nextDlItem.isHidden = downloader.isDownloading
+        dlSubmenu.addItem(nextDlItem)
+        nextDownloadItem = nextDlItem
+
+        let batch5Item = NSMenuItem(title: "⬇️ 批量下载 5 款壁纸", action: #selector(downloadBatch5Clicked), keyEquivalent: "")
+        batch5Item.target = self
+        batch5Item.isEnabled = undownloadedCount > 0
+        batch5Item.isHidden = downloader.isDownloading
+        dlSubmenu.addItem(batch5Item)
+        batchDownloadItem = batch5Item
         
         let dlHeaderTitle: String
         if downloader.isDownloading, let asset = downloader.currentAsset {
@@ -235,6 +319,8 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         let dlMenuItem = NSMenuItem(title: dlHeaderTitle, action: nil, keyEquivalent: "")
         dlMenuItem.submenu = dlSubmenu
         menu.addItem(dlMenuItem)
+        downloadMenuItem = dlMenuItem
+        updateVisibleDownloadProgress()
         
         // Open macOS Wallpaper Settings
         let sysSettingsItem = NSMenuItem(title: "⚙️ 打开 macOS 原生壁纸系统设置...", action: #selector(openSystemWallpaperSettings), keyEquivalent: "")
@@ -295,9 +381,10 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     }
     
     @objc private func toggleIndividualScreenClicked(_ sender: NSMenuItem) {
-        let screens = NSScreen.screens
-        guard sender.tag >= 0 && sender.tag < screens.count else { return }
-        let screen = screens[sender.tag]
+        guard let displayID = sender.representedObject as? NSNumber,
+              let screen = NSScreen.screens.first(where: {
+                  ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber) == displayID
+              }) else { return }
         WallpaperEngine.shared.toggleScreen(screen)
     }
     
@@ -308,9 +395,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     @objc private func autoSwitchIntervalClicked(_ sender: NSMenuItem) {
         guard let seconds = sender.representedObject as? Double else { return }
         WallpaperEngine.shared.autoSwitchInterval = seconds
-        if seconds > 0 && !WallpaperEngine.shared.isAnyScreenAnimating() {
-            WallpaperEngine.shared.startAll()
-        }
     }
     
     @objc private func toggleShuffleClicked() {
@@ -324,6 +408,23 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func toggleAutoDownloadClicked() {
         WallpaperDownloader.shared.isAutoDownloadEnabled.toggle()
+    }
+    
+    @objc private func toggleAmbientSoundClicked() {
+        AmbientSoundManager.shared.isEnabled.toggle()
+        rebuildMenu()
+    }
+    
+    @objc private func selectSoundTypeClicked(_ sender: NSMenuItem) {
+        guard let type = sender.representedObject as? AmbientSoundType else { return }
+        AmbientSoundManager.shared.selectedType = type
+        rebuildMenu()
+    }
+    
+    @objc private func selectVolumeClicked(_ sender: NSMenuItem) {
+        guard let vol = sender.representedObject as? Float else { return }
+        AmbientSoundManager.shared.volume = vol
+        rebuildMenu()
     }
     
     @objc private func downloadNextClicked() {
@@ -345,11 +446,28 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     }
     
     @objc private func toggleLaunchAtLogin() {
-        if SMAppService.mainApp.status == .enabled {
-            try? SMAppService.mainApp.unregister()
-        } else {
-            try? SMAppService.mainApp.register()
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                if SMAppService.mainApp.status != .requiresApproval {
+                    try SMAppService.mainApp.register()
+                }
+                if SMAppService.mainApp.status == .requiresApproval {
+                    let alert = NSAlert()
+                    alert.messageText = "需要允许开机自动启动"
+                    alert.informativeText = "请在系统设置的“通用 > 登录项”中允许 DynamicDesktop。"
+                    alert.runModal()
+                }
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "无法更改开机自动启动设置"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
         }
+        rebuildMenu()
     }
     
     @objc private func toggleFloatingPanel() {
@@ -380,7 +498,38 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             self.updateIcon()
             if !self.isMenuOpen {
                 self.rebuildMenu()
+            } else {
+                self.updateVisibleDownloadProgress()
             }
+        }
+    }
+
+    @objc private func onDownloadProgress() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // The menu is rebuilt before opening; only update visible progress here.
+            guard self.isMenuOpen else { return }
+            self.updateVisibleDownloadProgress()
+        }
+    }
+
+    private func updateVisibleDownloadProgress() {
+        let downloader = WallpaperDownloader.shared
+        downloadStatusItem?.isHidden = !downloader.isDownloading
+        pauseDownloadItem?.isHidden = !downloader.isDownloading
+        nextDownloadItem?.isHidden = downloader.isDownloading
+        batchDownloadItem?.isHidden = downloader.isDownloading
+        if downloader.isDownloading, let asset = downloader.currentAsset {
+            let percent = Int(downloader.progress * 100)
+            downloadMenuItem?.title = "📥 官方壁纸下载 [正在下载 \(asset.name) \(percent)%]"
+            downloadStatusItem?.title = "⏳ 正在下载: \(asset.name) (\(percent)%)"
+        } else {
+            let downloadedCount = downloader.getDownloadedCount()
+            let totalCount = downloader.getTotalCount()
+            downloadMenuItem?.title = "📥 官方壁纸下载管理 (已就绪 \(downloadedCount)/\(totalCount) 款)"
+            downloadStatusItem?.title = "当前没有正在进行的下载"
+            nextDownloadItem?.isEnabled = downloadedCount < totalCount
+            batchDownloadItem?.isEnabled = downloadedCount < totalCount
         }
     }
 }

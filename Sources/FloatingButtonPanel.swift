@@ -1,7 +1,7 @@
 import Cocoa
 
 class FloatingButtonPanel: NSPanel {
-    private var targetScreenIndex: Int = 0
+    private var targetScreenID: CGDirectDisplayID?
     private var actionButton: NSButton!
     private var screenSelectButton: NSPopUpButton!
     private var statusDot: NSTextField!
@@ -84,31 +84,45 @@ class FloatingButtonPanel: NSPanel {
         self.contentView = visualEffect
     }
     
-    private var currentTargetScreen: NSScreen? {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return nil }
-        if targetScreenIndex >= screens.count {
-            targetScreenIndex = 0
+    private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
         }
-        return screens[targetScreenIndex]
+        return CGDirectDisplayID(number.uint32Value)
     }
-    
+
+    private var currentTargetScreen: NSScreen? {
+        guard let targetScreenID = targetScreenID else { return nil }
+        return NSScreen.screens.first { displayID(for: $0) == targetScreenID }
+    }
+
     func refreshScreens() {
+        let screens = NSScreen.screens
+        if targetScreenID == nil || !screens.contains(where: { displayID(for: $0) == targetScreenID }) {
+            targetScreenID = screens.compactMap { displayID(for: $0) }.first
+        }
+
         screenSelectButton.removeAllItems()
-        for (i, scr) in NSScreen.screens.enumerated() {
-            let name = scr.localizedName
+        for screen in screens {
+            guard let id = displayID(for: screen) else { continue }
+            let name = screen.localizedName
             let title = name.contains("Built-in") || name.contains("Color LCD") ? "💻 内建屏" : "🖥️ \(name.prefix(8))"
             screenSelectButton.addItem(withTitle: title)
-            screenSelectButton.lastItem?.tag = i
-        }
-        if targetScreenIndex < screenSelectButton.numberOfItems {
-            screenSelectButton.selectItem(at: targetScreenIndex)
+            screenSelectButton.lastItem?.representedObject = NSNumber(value: id)
+            if id == targetScreenID {
+                screenSelectButton.select(screenSelectButton.lastItem)
+            }
         }
     }
-    
+
     func updateUI() {
         refreshScreens()
-        guard let screen = currentTargetScreen else { return }
+        guard let screen = currentTargetScreen else {
+            actionButton.isEnabled = false
+            statusDot.textColor = .systemGray
+            return
+        }
+        actionButton.isEnabled = true
         
         let isAnimating = WallpaperEngine.shared.isScreenAnimating(screen)
         if isAnimating {
@@ -125,7 +139,8 @@ class FloatingButtonPanel: NSPanel {
     }
     
     @objc private func screenSelectionChanged(_ sender: NSPopUpButton) {
-        targetScreenIndex = sender.indexOfSelectedItem
+        guard let number = sender.selectedItem?.representedObject as? NSNumber else { return }
+        targetScreenID = CGDirectDisplayID(number.uint32Value)
         updateUI()
     }
     

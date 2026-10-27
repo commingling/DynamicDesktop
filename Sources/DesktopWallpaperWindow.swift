@@ -2,73 +2,79 @@ import Cocoa
 import AVFoundation
 
 class DesktopWallpaperWindow: NSWindow {
-    let screenTarget: NSScreen
     private var playerLayer: AVPlayerLayer?
-    
-    init(screen: NSScreen, player: AVPlayer?) {
-        self.screenTarget = screen
-        
+    private var stillLayer: CALayer?
+
+    init(screen: NSScreen) {
         super.init(
             contentRect: screen.frame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        
-        self.level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) + 1)
-        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        self.ignoresMouseEvents = true
-        self.isOpaque = true
-        self.backgroundColor = .black
-        self.hasShadow = false
-        
-        setupLayer(player: player)
+
+        level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        ignoresMouseEvents = true
+        isOpaque = true
+        backgroundColor = .black
+        hasShadow = false
+
+        let containerView = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        containerView.wantsLayer = true
+
+        let still = CALayer()
+        still.frame = containerView.bounds
+        still.contentsGravity = .resizeAspectFill
+        still.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        containerView.layer?.addSublayer(still)
+        stillLayer = still
+
+        let video = AVPlayerLayer()
+        video.frame = containerView.bounds
+        video.videoGravity = .resizeAspectFill
+        video.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        video.isHidden = true
+        containerView.layer?.addSublayer(video)
+        playerLayer = video
+
+        contentView = containerView
+        setFrame(screen.frame, display: true)
     }
-    
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-    
-    private func setupLayer(player: AVPlayer?) {
-        let containerView = NSView(frame: NSRect(origin: .zero, size: screenTarget.frame.size))
-        containerView.wantsLayer = true
-        
-        let layer = AVPlayerLayer(player: player)
-        layer.frame = containerView.bounds
-        layer.videoGravity = .resizeAspectFill
-        layer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-        containerView.layer?.addSublayer(layer)
-        self.playerLayer = layer
-        
-        self.contentView = containerView
-        self.setFrame(screenTarget.frame, display: true)
-    }
-    
-    func attachPlayer(_ player: AVPlayer?) {
-        CATransaction.begin()
+
+    private func fadeTransition() {
         let transition = CATransition()
         transition.type = .fade
         transition.duration = 0.5
         contentView?.layer?.add(transition, forKey: "fadeTransition")
-        
-        self.playerLayer?.player = player
-        CATransaction.commit()
     }
-    
-    func start() {
-        self.orderFrontRegardless()
+
+    func showPlayer(_ player: AVPlayer?) {
+        fadeTransition()
+        playerLayer?.player = player
+        playerLayer?.isHidden = false
     }
-    
-    func stop() {
-        self.orderOut(nil)
-    }
-    
-    func updateFrame(screen: NSScreen) {
-        self.setFrame(screen.frame, display: true)
-        self.playerLayer?.frame = NSRect(origin: .zero, size: screen.frame.size)
-    }
-    
-    deinit {
+
+    func showStill(_ image: CGImage) {
+        fadeTransition()
+        stillLayer?.contents = image
+        playerLayer?.isHidden = true
         playerLayer?.player = nil
-        playerLayer = nil
+    }
+
+    func start() {
+        orderFrontRegardless()
+    }
+
+    func stop() {
+        orderOut(nil)
+        playerLayer?.player = nil
+    }
+
+    func updateFrame(screen: NSScreen) {
+        setFrame(screen.frame, display: true)
     }
 }

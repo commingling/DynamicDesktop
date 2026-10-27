@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Pure Menu Bar App: NO desktop windows or panels created on launch!
         self.statusController = StatusBarMenuController()
+        WallpaperEngine.shared.restorePreviousSession()
         print("DynamicDesktop started in pure Menu Bar mode.")
     }
     

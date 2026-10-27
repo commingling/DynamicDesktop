@@ -63,9 +63,11 @@ class WallpaperDetector {
         // Sort so the active one is first, then alphabetical
         let activeID = getActiveAssetID()
         return results.sorted { a, b in
-            if a.id == activeID { return true }
-            if b.id == activeID { return false }
-            return a.name < b.name
+            let aIsActive = a.id == activeID
+            let bIsActive = b.id == activeID
+            if aIsActive != bIsActive { return aIsActive }
+            if a.name != b.name { return a.name.localizedStandardCompare(b.name) == .orderedAscending }
+            return a.id < b.id
         }
     }
     

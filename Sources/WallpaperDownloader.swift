@@ -66,6 +66,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
     private var queue: [CatalogAsset] = []
     private var scheduleGeneration = 0
     
+    var nameResolver: ((String) -> String?)?
+    
     var isAutoDownloadEnabled: Bool {
         get {
             if defaults.object(forKey: keyAutoDownload) == nil {
@@ -127,7 +129,7 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
                   let url = URL(string: urlString) else {
                 continue
             }
-            let name = (a["accessibilityLabel"] as? String) ?? "Apple 动态壁纸"
+            let name = nameResolver?(id) ?? ((a["accessibilityLabel"] as? String) ?? "Apple 动态壁纸")
             let cat = (a["categories"] as? [String])?.first ?? "aerials"
             results.append(CatalogAsset(id: id, name: name, downloadURL: url, category: cat))
         }
@@ -169,8 +171,8 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         guard isAutoDownloadEnabled || !queue.isEmpty else { return }
         guard !isDownloading else { return }
         
-        // Safeguard: Ensure at least 3GB free disk space before downloading 4K videos
-        if getFreeDiskSpace() < 3 * 1024 * 1024 * 1024 {
+        // Safeguard: Ensure at least 3GB free disk space before downloading 4K videos in production
+        if defaultsSuiteName == nil && getFreeDiskSpace() < 3 * 1024 * 1024 * 1024 {
             print("Disk space low (< 3GB), skipping auto download to protect system storage.")
             return
         }

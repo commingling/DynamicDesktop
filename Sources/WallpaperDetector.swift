@@ -3,7 +3,17 @@ import Foundation
 struct WallpaperAsset: Identifiable, Equatable {
     let id: String
     let name: String
+    let chineseName: String?
+    let englishName: String?
     let url: URL
+    
+    init(id: String, name: String, chineseName: String? = nil, englishName: String? = nil, url: URL) {
+        self.id = id
+        self.name = name
+        self.chineseName = chineseName
+        self.englishName = englishName
+        self.url = url
+    }
     
     var fileSize: Int64 {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
@@ -24,12 +34,53 @@ struct WallpaperAsset: Identifiable, Equatable {
     }
 }
 
+struct WallpaperNameInfo {
+    let display: String
+    let chinese: String?
+    let english: String?
+}
+
 class WallpaperDetector {
     static let shared = WallpaperDetector()
     
     let videosDir = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/videos").expandingTildeInPath)
     private let manifestFile = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/manifest/entries.json").expandingTildeInPath)
+    private let loctableFile = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/aerials/manifest/TVIdleScreenStrings.bundle/Contents/Resources/Localizable.nocache.loctable").expandingTildeInPath)
     private let indexPlist = URL(fileURLWithPath: NSString(string: "~/Library/Application Support/com.apple.wallpaper/Store/Index.plist").expandingTildeInPath)
+    
+    private init() {
+        WallpaperDownloader.shared.nameResolver = { [weak self] id in
+            self?.getNamesMap()[id]?.display
+        }
+    }
+    
+    private var cachedLocalization: [String: String]?
+    
+    /// Loads Apple's official localized strings table (.loctable plist)
+    func getLocalizedStrings() -> [String: String] {
+        if let cached = cachedLocalization { return cached }
+        
+        guard let data = try? Data(contentsOf: loctableFile),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            return [:]
+        }
+        
+        let preferred = Locale.preferredLanguages
+        let isTrad = preferred.contains { $0.hasPrefix("zh-Hant") || $0.hasPrefix("zh-TW") || $0.hasPrefix("zh-HK") }
+        
+        var dict: [String: String] = [:]
+        if isTrad {
+            if let zhTW = plist["zh_TW"] as? [String: String] { dict = zhTW }
+            else if let zhHK = plist["zh_HK"] as? [String: String] { dict = zhHK }
+            else if let zhCN = plist["zh_CN"] as? [String: String] { dict = zhCN }
+        } else {
+            if let zhCN = plist["zh_CN"] as? [String: String] { dict = zhCN }
+            else if let zhTW = plist["zh_TW"] as? [String: String] { dict = zhTW }
+        }
+        
+        cachedLocalization = dict
+        return dict
+    }
     
     func getActiveAssetID() -> String? {
         guard let data = try? Data(contentsOf: indexPlist),
@@ -47,17 +98,60 @@ class WallpaperDetector {
         return assetID
     }
     
-    func getNamesMap() -> [String: String] {
-        var namesMap: [String: String] = [:]
-        if let manifestData = try? Data(contentsOf: manifestFile),
-           let json = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
-           let assets = json["assets"] as? [[String: Any]] {
-            for asset in assets {
-                if let id = asset["id"] as? String, let name = asset["accessibilityLabel"] as? String {
-                    namesMap[id] = name
-                }
-            }
+    /// Builds a dictionary of wallpaper ID to localized names (Chinese prioritized, paired with English)
+    func getNamesMap() -> [String: WallpaperNameInfo] {
+        var namesMap: [String: WallpaperNameInfo] = [:]
+        let locDict = getLocalizedStrings()
+        
+        guard let manifestData = try? Data(contentsOf: manifestFile),
+              let json = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let assets = json["assets"] as? [[String: Any]] else {
+            return [:]
         }
+        
+        for asset in assets {
+            guard let id = asset["id"] as? String else { continue }
+            let locKey = asset["localizedNameKey"] as? String
+            let shotID = asset["shotID"] as? String
+            let accLabel = asset["accessibilityLabel"] as? String
+            
+            // 1. Look up official Chinese name from Apple's loctable
+            var zhName: String?
+            if let key = locKey, let val = locDict[key] {
+                zhName = val
+            } else if let shot = shotID, let val = locDict["\(shot)_NAME"] {
+                zhName = val
+            } else if let shot = shotID, let val = locDict[shot] {
+                zhName = val
+            }
+            
+            // Refine generic light/dark names
+            if zhName == "浅色" || zhName == "深色" {
+                zhName = "macOS 索诺玛 (\(zhName!))"
+            }
+            
+            // 2. Clean English name (filter out camera sensor codes with underscores)
+            let rawEn = accLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isCode = (rawEn?.contains("_") == true) || (rawEn?.count ?? 0) < 2
+            let cleanEn = (isCode ? nil : rawEn)
+            
+            // 3. Compose display name: "中文名称 (English Name)"
+            let displayName: String
+            if let zh = zhName, !zh.isEmpty {
+                if let en = cleanEn, !en.isEmpty, en.lowercased() != zh.lowercased(), !zh.contains(en) {
+                    displayName = "\(zh) (\(en))"
+                } else {
+                    displayName = zh
+                }
+            } else if let en = cleanEn, !en.isEmpty {
+                displayName = en
+            } else {
+                displayName = "原生动态壁纸 (\(id.prefix(6)))"
+            }
+            
+            namesMap[id] = WallpaperNameInfo(display: displayName, chinese: zhName, english: cleanEn)
+        }
+        
         return namesMap
     }
     
@@ -70,8 +164,15 @@ class WallpaperDetector {
         var results: [WallpaperAsset] = []
         for file in files where file.pathExtension.lowercased() == "mov" {
             let assetID = file.deletingPathExtension().lastPathComponent
-            let name = namesMap[assetID] ?? "原生动态壁纸 (\(assetID.prefix(6)))"
-            results.append(WallpaperAsset(id: assetID, name: name, url: file))
+            let info = namesMap[assetID]
+            let name = info?.display ?? "原生动态壁纸 (\(assetID.prefix(6)))"
+            results.append(WallpaperAsset(
+                id: assetID,
+                name: name,
+                chineseName: info?.chinese,
+                englishName: info?.english,
+                url: file
+            ))
         }
         
         // Sort so the active one is first, then alphabetical

@@ -19,7 +19,6 @@ class WallpaperEngine {
     private let keyAutoSwitchInterval = "AutoSwitchInterval"
     private let keyAutoSwitchShuffle = "AutoSwitchShuffle"
     private let keyLastWallpaperID = "LastSelectedWallpaperID"
-    private let keyIsRunning = "IsDynamicDesktopRunning"
     
     var autoSwitchInterval: TimeInterval {
         get {
@@ -60,13 +59,6 @@ class WallpaperEngine {
         )
         
         startAutoSwitchTimer()
-        
-        // Auto-resume if it was running before
-        if UserDefaults.standard.bool(forKey: keyIsRunning) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.startAll()
-            }
-        }
     }
     
     private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
@@ -94,34 +86,60 @@ class WallpaperEngine {
         self.sharedPlayer = player
     }
     
-    /// Starts dynamic wallpaper on ALL connected screens simultaneously with the exact same shared player
-    func startAll() {
-        guard let wallpaper = currentWallpaper ?? WallpaperDetector.shared.getActiveWallpaper() else {
-            print("No wallpaper found to animate!")
-            return
-        }
+    /// Starts dynamic wallpaper on a specific screen using the shared player
+    func startScreen(_ screen: NSScreen) {
+        guard let did = displayID(for: screen) else { return }
+        guard let wallpaper = currentWallpaper ?? WallpaperDetector.shared.getActiveWallpaper() else { return }
         self.currentWallpaper = wallpaper
         
         if sharedPlayer == nil {
             ensureSharedPlayer(for: wallpaper)
         }
         
-        // Attach all connected screens to the same shared player
-        for screen in NSScreen.screens {
-            guard let did = displayID(for: screen) else { continue }
-            if let existing = windows[did] {
-                existing.attachPlayer(sharedPlayer)
-                existing.start()
-            } else {
-                let win = DesktopWallpaperWindow(screen: screen, player: sharedPlayer)
-                windows[did] = win
-                win.start()
-            }
+        if let existing = windows[did] {
+            existing.attachPlayer(sharedPlayer)
+            existing.start()
+        } else {
+            let win = DesktopWallpaperWindow(screen: screen, player: sharedPlayer)
+            windows[did] = win
+            win.start()
         }
         
         sharedPlayer?.play()
-        UserDefaults.standard.set(true, forKey: keyIsRunning)
         notifyChange()
+    }
+    
+    /// Stops dynamic wallpaper on a specific screen
+    func stopScreen(_ screen: NSScreen) {
+        guard let did = displayID(for: screen) else { return }
+        if let win = windows[did] {
+            win.stop()
+            windows.removeValue(forKey: did)
+        }
+        if windows.isEmpty {
+            sharedPlayer?.pause()
+        }
+        notifyChange()
+    }
+    
+    /// Toggles a specific screen on or off
+    func toggleScreen(_ screen: NSScreen) {
+        if isScreenAnimating(screen) {
+            stopScreen(screen)
+        } else {
+            startScreen(screen)
+        }
+    }
+    
+    func toggleScreen(screen: NSScreen) {
+        toggleScreen(screen)
+    }
+    
+    /// Starts dynamic wallpaper on ALL connected screens simultaneously
+    func startAll() {
+        for screen in NSScreen.screens {
+            startScreen(screen)
+        }
     }
     
     /// Stops dynamic wallpaper on ALL screens
@@ -131,25 +149,20 @@ class WallpaperEngine {
             win.stop()
         }
         windows.removeAll()
-        UserDefaults.standard.set(false, forKey: keyIsRunning)
         notifyChange()
     }
     
     /// Toggles all screens on or off together
     func toggleAll() {
-        if isAnyScreenAnimating() {
+        let allAnimating = NSScreen.screens.allSatisfy { isScreenAnimating($0) }
+        if allAnimating {
             stopAll()
         } else {
             startAll()
         }
     }
     
-    /// Backward-compatible alias for toggling screens
-    func toggleScreen(screen: NSScreen) {
-        toggleAll()
-    }
-    
-    /// Sets a new wallpaper and synchronizes it across ALL screens immediately
+    /// Sets a new wallpaper and synchronizes it across all currently active screens
     func setWallpaper(_ asset: WallpaperAsset) {
         self.currentWallpaper = asset
         UserDefaults.standard.set(asset.id, forKey: keyLastWallpaperID)
@@ -160,23 +173,17 @@ class WallpaperEngine {
         // Create new synchronized player for this wallpaper
         ensureSharedPlayer(for: asset)
         
-        // Always apply to ALL screens
-        for screen in NSScreen.screens {
-            guard let did = displayID(for: screen) else { continue }
-            if let win = windows[did] {
+        if windows.isEmpty {
+            // If no screen was running, start all screens so user sees the change
+            startAll()
+        } else {
+            // Update all currently active screen windows with the new player
+            for (_, win) in windows {
                 win.attachPlayer(sharedPlayer)
-                win.start()
-            } else {
-                // If not yet running on this screen, create and start it
-                let win = DesktopWallpaperWindow(screen: screen, player: sharedPlayer)
-                windows[did] = win
-                win.start()
             }
+            sharedPlayer?.play()
+            notifyChange()
         }
-        
-        sharedPlayer?.play()
-        UserDefaults.standard.set(true, forKey: keyIsRunning)
-        notifyChange()
     }
     
     /// Cycles to the next available wallpaper
@@ -209,7 +216,6 @@ class WallpaperEngine {
         
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            // Only auto-switch if wallpaper is currently active
             if self.isAnyScreenAnimating() {
                 self.switchToNextWallpaper()
             }

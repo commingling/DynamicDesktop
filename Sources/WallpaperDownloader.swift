@@ -111,9 +111,23 @@ class WallpaperDownloader: NSObject, URLSessionDownloadDelegate {
         return getFullCatalog().count
     }
     
+    private func getFreeDiskSpace() -> Int64 {
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+           let freeSpace = attrs[.systemFreeSize] as? NSNumber {
+            return freeSpace.int64Value
+        }
+        return 0
+    }
+    
     func checkAndStartNextDownload() {
         guard isAutoDownloadEnabled || !queue.isEmpty else { return }
         guard !isDownloading else { return }
+        
+        // Safeguard: Ensure at least 3GB free disk space before downloading 4K videos
+        if getFreeDiskSpace() < 3 * 1024 * 1024 * 1024 {
+            print("Disk space low (< 3GB), skipping auto download to protect system storage.")
+            return
+        }
         
         let target: CatalogAsset?
         if !queue.isEmpty {

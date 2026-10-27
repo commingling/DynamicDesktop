@@ -47,7 +47,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             } else {
                 button.title = "🖥️✨"
             }
-            button.toolTip = "Mac 动态壁纸：双屏同步运动中 (点击查看/切换)"
+            button.toolTip = "Mac 动态壁纸：正在运动中 (点击查看/切换)"
         } else {
             let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
             if let img = NSImage(systemSymbolName: "display", accessibilityDescription: "已静止")?.withSymbolConfiguration(config) {
@@ -55,7 +55,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             } else {
                 button.title = "🖥️"
             }
-            button.toolTip = "Mac 动态壁纸控制 (点击让双屏动起来)"
+            button.toolTip = "Mac 动态壁纸控制 (点击展开菜单)"
         }
     }
     
@@ -68,28 +68,51 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
         
-        // Master Toggle: ALL SCREENS SYNCED
-        let isRunning = WallpaperEngine.shared.isAnyScreenAnimating()
-        let masterTitle = isRunning
-            ? "🟢 正在运动 (所有屏幕同步播放) - 点击恢复静止 ⏸"
-            : "⚪️ 让所有屏幕动起来 ▶ (双屏同步相同壁纸)"
-        
-        let masterItem = NSMenuItem(title: masterTitle, action: #selector(toggleAllScreensClicked), keyEquivalent: " ")
-        masterItem.target = self
-        menu.addItem(masterItem)
+        // 1. Master Control (All screens together)
+        let screens = NSScreen.screens
+        let allAnimating = !screens.isEmpty && screens.allSatisfy { WallpaperEngine.shared.isScreenAnimating($0) }
+        let batchTitle = allAnimating 
+            ? "⏸ 所有屏幕全部恢复静止" 
+            : "▶ 让所有屏幕全部动起来 (双屏同步)"
+        let batchItem = NSMenuItem(title: batchTitle, action: #selector(toggleAllScreensClicked), keyEquivalent: "a")
+        batchItem.target = self
+        menu.addItem(batchItem)
         
         menu.addItem(NSMenuItem.separator())
         
-        // Quick Action: Next Wallpaper
+        // 2. Individual Screen Controls (单独开启/停止某个屏幕)
+        let sectionHeader = NSMenuItem(title: "💻 独立屏幕开关：", action: nil, keyEquivalent: "")
+        sectionHeader.isEnabled = false
+        menu.addItem(sectionHeader)
+        
+        for (i, screen) in screens.enumerated() {
+            let isAnim = WallpaperEngine.shared.isScreenAnimating(screen)
+            let rawName = screen.localizedName
+            let screenLabel = rawName.contains("Built-in") || rawName.contains("Color LCD") ? "💻 内建屏幕" : "🖥️ \(rawName)"
+            let statusText = isAnim ? "🟢 正在运动 (点击停止 ⏸)" : "⚪️ 点击让它单独动起来 ▶"
+            
+            let item = NSMenuItem(
+                title: "  \(screenLabel)：\(statusText)",
+                action: #selector(toggleIndividualScreenClicked(_:)),
+                keyEquivalent: "\(i + 1)"
+            )
+            item.target = self
+            item.tag = i
+            menu.addItem(item)
+        }
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // 3. Quick Action: Next Wallpaper
         let nextWpItem = NSMenuItem(
-            title: "⏭ 立即切换至下一张壁纸 (双屏同步切换)",
+            title: "⏭ 立即切换至下一张壁纸 (⌘N)",
             action: #selector(nextWallpaperClicked),
             keyEquivalent: "n"
         )
         nextWpItem.target = self
         menu.addItem(nextWpItem)
         
-        // Auto-switch timer submenu
+        // 4. Auto-switch timer submenu
         let autoSubmenu = NSMenu()
         let currentInterval = WallpaperEngine.shared.autoSwitchInterval
         
@@ -143,7 +166,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        // Wallpapers Submenu
+        // 5. Wallpapers Submenu
         let currentWp = WallpaperEngine.shared.currentWallpaper
         let wpSubmenu = NSMenu()
         let allWallpapers = WallpaperDetector.shared.getAllWallpapers()
@@ -163,7 +186,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         wpMenuItem.submenu = wpSubmenu
         menu.addItem(wpMenuItem)
         
-        // Auto Download Submenu
+        // 6. Auto Download Submenu
         let dlSubmenu = NSMenu()
         let downloader = WallpaperDownloader.shared
         let downloadedCount = downloader.getDownloadedCount()
@@ -171,7 +194,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         let undownloadedCount = max(0, totalCount - downloadedCount)
         
         let autoDlItem = NSMenuItem(
-            title: "自动在后台下载官方壁纸 (无需手动下载)",
+            title: "自动在后台下载官方壁纸",
             action: #selector(toggleAutoDownloadClicked),
             keyEquivalent: ""
         )
@@ -199,40 +222,19 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             batch5Item.target = self
             batch5Item.isEnabled = undownloadedCount > 0
             dlSubmenu.addItem(batch5Item)
-            
-            let allDlItem = NSMenuItem(title: "⬇️ 下载全部剩余官方壁纸 (\(undownloadedCount) 款)", action: #selector(downloadAllClicked), keyEquivalent: "")
-            allDlItem.target = self
-            allDlItem.isEnabled = undownloadedCount > 0
-            dlSubmenu.addItem(allDlItem)
         }
         
         let dlHeaderTitle: String
         if downloader.isDownloading, let asset = downloader.currentAsset {
             let pct = Int(downloader.progress * 100)
-            dlHeaderTitle = "📥 官方壁纸自动下载 [正在下载 \(asset.name) \(pct)%]"
+            dlHeaderTitle = "📥 官方壁纸下载 [正在下载 \(asset.name) \(pct)%]"
         } else {
-            dlHeaderTitle = "📥 官方壁纸自动下载 (已就绪 \(downloadedCount)/\(totalCount) 款)"
+            dlHeaderTitle = "📥 官方壁纸下载管理 (已就绪 \(downloadedCount)/\(totalCount) 款)"
         }
         
         let dlMenuItem = NSMenuItem(title: dlHeaderTitle, action: nil, keyEquivalent: "")
         dlMenuItem.submenu = dlSubmenu
         menu.addItem(dlMenuItem)
-        
-        // Connected displays status submenu
-        let displaysSubmenu = NSMenu()
-        let screens = NSScreen.screens
-        for screen in screens {
-            let rawName = screen.localizedName
-            let screenLabel = rawName.contains("Built-in") || rawName.contains("Color LCD") ? "💻 内建屏幕" : "🖥️ \(rawName)"
-            let isAnim = WallpaperEngine.shared.isScreenAnimating(screen)
-            let statusText = isAnim ? "🟢 同步运行中" : "⚪️ 已静止"
-            let item = NSMenuItem(title: "\(statusText) - \(screenLabel)", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            displaysSubmenu.addItem(item)
-        }
-        let displaysItem = NSMenuItem(title: "💻 屏幕状态 (共 \(screens.count) 台显示器已连接)", action: nil, keyEquivalent: "")
-        displaysItem.submenu = displaysSubmenu
-        menu.addItem(displaysItem)
         
         // Open macOS Wallpaper Settings
         let sysSettingsItem = NSMenuItem(title: "⚙️ 打开 macOS 原生壁纸系统设置...", action: #selector(openSystemWallpaperSettings), keyEquivalent: "")
@@ -292,6 +294,13 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         WallpaperEngine.shared.toggleAll()
     }
     
+    @objc private func toggleIndividualScreenClicked(_ sender: NSMenuItem) {
+        let screens = NSScreen.screens
+        guard sender.tag >= 0 && sender.tag < screens.count else { return }
+        let screen = screens[sender.tag]
+        WallpaperEngine.shared.toggleScreen(screen)
+    }
+    
     @objc private func nextWallpaperClicked() {
         WallpaperEngine.shared.switchToNextWallpaper()
     }
@@ -323,10 +332,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func downloadBatch5Clicked() {
         WallpaperDownloader.shared.downloadBatch(count: 5)
-    }
-    
-    @objc private func downloadAllClicked() {
-        WallpaperDownloader.shared.downloadAll()
     }
     
     @objc private func pauseDownloadClicked() {

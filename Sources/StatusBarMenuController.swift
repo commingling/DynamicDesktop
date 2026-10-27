@@ -219,6 +219,16 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         soundToggleItem.target = self
         soundToggleItem.state = soundMgr.isEnabled ? .on : .off
         soundSubmenu.addItem(soundToggleItem)
+
+        let warmFilterItem = NSMenuItem(
+            title: "🎧 耳机柔和降噪 / 暖音模式 (消除刺啦声与毛刺)",
+            action: #selector(toggleWarmFilterClicked),
+            keyEquivalent: ""
+        )
+        warmFilterItem.target = self
+        warmFilterItem.state = soundMgr.isWarmFilterEnabled ? .on : .off
+        soundSubmenu.addItem(warmFilterItem)
+        
         soundSubmenu.addItem(NSMenuItem.separator())
         
         let soundSection = NSMenuItem(title: "声音选择：", action: nil, keyEquivalent: "")
@@ -242,10 +252,12 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
         soundSubmenu.addItem(volSection)
         
         let volumes: [(title: String, val: Float)] = [
-            ("🔈 10% (轻柔微声)", 0.10),
-            ("🔉 25% (舒适伴奏 - 推荐)", 0.25),
-            ("🔊 50% (沉浸自然)", 0.50),
-            ("🔊 75%", 0.75),
+            ("🔈 8% (微风细语 - 耳机极轻柔)", 0.08),
+            ("🔉 15% (柔和伴奏 - 耳机推荐)", 0.15),
+            ("🔉 25% (清晰自然 - 外放推荐)", 0.25),
+            ("🔊 40% (沉浸自然)", 0.40),
+            ("🔊 60%", 0.60),
+            ("🔊 80%", 0.80),
             ("🔊 100%", 1.00)
         ]
         
@@ -253,7 +265,7 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             let item = NSMenuItem(title: vol.title, action: #selector(selectVolumeClicked(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = vol.val
-            if abs(soundMgr.volume - vol.val) < 0.05 {
+            if abs(soundMgr.volume - vol.val) < 0.04 {
                 item.state = .on
             }
             soundSubmenu.addItem(item)
@@ -412,6 +424,11 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func toggleAmbientSoundClicked() {
         AmbientSoundManager.shared.isEnabled.toggle()
+        rebuildMenu()
+    }
+    
+    @objc private func toggleWarmFilterClicked() {
+        AmbientSoundManager.shared.isWarmFilterEnabled.toggle()
         rebuildMenu()
     }
     

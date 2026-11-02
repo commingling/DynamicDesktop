@@ -243,75 +243,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
             menu.addItem(warning)
         }
 
-        // Ambient Sound Submenu
-        let soundMgr = AmbientSoundManager.shared
-        let soundSubmenu = NSMenu()
-        
-        let soundToggleItem = NSMenuItem(
-            title: "开启自然环境氛围音",
-            action: #selector(toggleAmbientSoundClicked),
-            keyEquivalent: ""
-        )
-        soundToggleItem.target = self
-        soundToggleItem.state = soundMgr.isEnabled ? .on : .off
-        soundSubmenu.addItem(soundToggleItem)
-
-        let warmFilterItem = NSMenuItem(
-            title: "🎧 柔和模式（降低高频）",
-            action: #selector(toggleWarmFilterClicked),
-            keyEquivalent: ""
-        )
-        warmFilterItem.target = self
-        warmFilterItem.state = soundMgr.isWarmFilterEnabled ? .on : .off
-        soundSubmenu.addItem(warmFilterItem)
-        
-        soundSubmenu.addItem(NSMenuItem.separator())
-        
-        let soundSection = NSMenuItem(title: "声音选择：", action: nil, keyEquivalent: "")
-        soundSection.isEnabled = false
-        soundSubmenu.addItem(soundSection)
-        
-        for soundType in AmbientSoundType.allCases {
-            let item = NSMenuItem(title: soundType.displayName, action: #selector(selectSoundTypeClicked(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = soundType
-            if soundMgr.selectedType == soundType {
-                item.state = .on
-            }
-            soundSubmenu.addItem(item)
-        }
-        
-        soundSubmenu.addItem(NSMenuItem.separator())
-        
-        let volSection = NSMenuItem(title: "音量大小：", action: nil, keyEquivalent: "")
-        volSection.isEnabled = false
-        soundSubmenu.addItem(volSection)
-        
-        let volumes: [(title: String, val: Float)] = [
-            ("🔈 8% (微风细语 - 耳机极轻柔)", 0.08),
-            ("🔉 15% (柔和伴奏 - 耳机推荐)", 0.15),
-            ("🔉 25% (清晰自然 - 外放推荐)", 0.25),
-            ("🔊 40% (沉浸自然)", 0.40),
-            ("🔊 60%", 0.60),
-            ("🔊 80%", 0.80),
-            ("🔊 100%", 1.00)
-        ]
-        
-        for vol in volumes {
-            let item = NSMenuItem(title: vol.title, action: #selector(selectVolumeClicked(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = vol.val
-            if abs(soundMgr.volume - vol.val) < 0.04 {
-                item.state = .on
-            }
-            soundSubmenu.addItem(item)
-        }
-        
-        let currentSoundLabel = soundMgr.isEnabled ? soundMgr.getCurrentSoundName() : "已关闭"
-        let soundMenuItem = NSMenuItem(title: "🎵 官方自然环境音 (当前: \(currentSoundLabel))", action: nil, keyEquivalent: "")
-        soundMenuItem.submenu = soundSubmenu
-        menu.addItem(soundMenuItem)
-        
         // 6. Auto Download Submenu
         let dlSubmenu = NSMenu()
         dlSubmenu.autoenablesItems = false
@@ -509,28 +440,6 @@ class StatusBarMenuController: NSObject, NSMenuDelegate {
     
     @objc private func toggleAutoDownloadClicked() {
         WallpaperDownloader.shared.isAutoDownloadEnabled.toggle()
-    }
-    
-    @objc private func toggleAmbientSoundClicked() {
-        AmbientSoundManager.shared.isEnabled.toggle()
-        rebuildMenu()
-    }
-    
-    @objc private func toggleWarmFilterClicked() {
-        AmbientSoundManager.shared.isWarmFilterEnabled.toggle()
-        rebuildMenu()
-    }
-    
-    @objc private func selectSoundTypeClicked(_ sender: NSMenuItem) {
-        guard let type = sender.representedObject as? AmbientSoundType else { return }
-        AmbientSoundManager.shared.selectedType = type
-        rebuildMenu()
-    }
-    
-    @objc private func selectVolumeClicked(_ sender: NSMenuItem) {
-        guard let vol = sender.representedObject as? Float else { return }
-        AmbientSoundManager.shared.volume = vol
-        rebuildMenu()
     }
     
     @objc private func downloadNextClicked() {

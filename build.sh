@@ -25,7 +25,6 @@ mkdir -p "$RESOURCES"
 swiftc -O -target "$BUILD_ARCH-apple-macosx14.0" \
   Sources/WallpaperDetector.swift \
   Sources/WallpaperDownloader.swift \
-  Sources/AmbientSoundManager.swift \
   Sources/DesktopWallpaperWindow.swift \
   Sources/WallpaperEngine.swift \
   Sources/FloatingButtonPanel.swift \

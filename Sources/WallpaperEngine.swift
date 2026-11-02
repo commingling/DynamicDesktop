@@ -194,7 +194,6 @@ class WallpaperEngine {
         window.showPlayer(sharedPlayer)
         window.start()
         sharedPlayer?.play()
-        AmbientSoundManager.shared.play()
         if stillImageWallpaperID == wallpaper.id {
             updateStaticScreens()
         } else if imageGenerator == nil {
@@ -222,7 +221,6 @@ class WallpaperEngine {
         }
         if animatingScreenIDs.isEmpty {
             sharedPlayer?.pause()
-            AmbientSoundManager.shared.pause()
         }
         notifyChange()
     }
@@ -237,7 +235,6 @@ class WallpaperEngine {
 
     func startAll() {
         for screen in NSScreen.screens { startScreen(screen) }
-        AmbientSoundManager.shared.play()
     }
 
     /// Remove all overlays, for example when the application quits.
@@ -249,7 +246,6 @@ class WallpaperEngine {
         imageGenerator = nil
         animatingScreenIDs.removeAll()
         sharedPlayer?.pause()
-        AmbientSoundManager.shared.pause()
         for window in windows.values { window.stop() }
         windows.removeAll()
         notifyChange()
@@ -278,7 +274,6 @@ class WallpaperEngine {
                 windows[id]?.showPlayer(sharedPlayer)
             }
             if !animatingScreenIDs.isEmpty { sharedPlayer?.play() }
-            AmbientSoundManager.shared.updateForWallpaper(asset)
             requestStillImage(for: asset)
             notifyChange()
         }

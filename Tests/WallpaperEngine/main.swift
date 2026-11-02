@@ -24,14 +24,6 @@ class WallpaperDownloader {
     func markAsDeleted(assetID: String) {}
 }
 
-// Keep the engine test isolated from actual audio output.
-class AmbientSoundManager {
-    static let shared = AmbientSoundManager()
-    func play() {}
-    func pause() {}
-    func updateForWallpaper(_ wallpaper: WallpaperAsset?) {}
-}
-
 class DesktopWallpaperWindow {
     static var visible: [CGDirectDisplayID: DesktopWallpaperWindow] = [:]
     let id: CGDirectDisplayID
